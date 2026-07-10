@@ -1,0 +1,59 @@
+# Dev local — AI Gateway
+#
+# PostgreSQL seul (recommandé : backend/frontend en natif sur la machine) :
+#   docker compose up database
+#   export DB_URL=jdbc:postgresql://localhost:5433/Ai_Gateway_DB
+#   ./mvnw spring-boot:run   # backend
+#   npm run dev              # frontend
+#
+# Stack complète dans Docker (Ollama doit tourner sur l'hôte) :
+#   docker compose --profile stack up --build
+
+services:
+  database:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: Ai_Gateway_DB
+    ports:
+      - "5433:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d Ai_Gateway_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    profiles: ["stack"]
+    build: ./backend
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./backend/.env
+    environment:
+      DB_URL: jdbc:postgresql://database:5432/Ai_Gateway_DB
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      APP_SEED_ENABLED: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      database:
+        condition: service_healthy
+
+  frontend:
+    profiles: ["stack"]
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    environment:
+      API_PROXY_TARGET: http://backend:8080
+    depends_on:
+      - backend
+
+volumes:
+  db-data:

@@ -1,5 +1,6 @@
 package com.backend.Ai_Gateway.services;
 
+import com.backend.Ai_Gateway.config.ModelPricing;
 import com.backend.Ai_Gateway.enums.RequestStatus;
 import com.backend.Ai_Gateway.entity.Model;
 import com.backend.Ai_Gateway.entity.UsageLog;
@@ -59,7 +60,7 @@ public class UsageService {
         usageLog.setLatencyMs(latencyMs);
         usageLog.setStatus(status);
         usageLog.setCreatedAt(Instant.now());
-        usageLog.setEstimatedCost(0.0);
+        usageLog.setEstimatedCost(calculateCost(prompt, completion, model.getName()));
 
         usageLogRepository.save(usageLog);
     }
@@ -80,8 +81,10 @@ public class UsageService {
         return usageLogRepository.findByUserIdAndCreatedAtBetween(userId, start, end);
     }
 
-    public double calculateCost(Integer completionTokens, Integer promptTokens, Integer prixInput, Integer prixOutput) {
-        return (promptTokens / 1000000.0) * prixInput + (completionTokens / 1000000.0) * prixOutput;
+    public double calculateCost(int promptTokens, int completionTokens, String modelName) {
+        ModelPricing.PricePerMillion pricing = ModelPricing.forModel(modelName);
+        return (promptTokens / 1_000_000.0) * pricing.inputUsd()
+                + (completionTokens / 1_000_000.0) * pricing.outputUsd();
     }
 
     public List<UsageLog> getUsageByUserId(Long userId) {

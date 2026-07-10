@@ -32,6 +32,9 @@ public class DevDataSeeder implements ApplicationRunner {
     @Value("${app.ollama.base-url:http://localhost:11434}")
     private String ollamaBaseUrl;
 
+    @Value("${OPENAI_API_KEY:}")
+    private String openAiApiKey;
+
     public DevDataSeeder(
             UserRepository userRepository,
             ProviderRepository providerRepository,
@@ -79,6 +82,8 @@ public class DevDataSeeder implements ApplicationRunner {
             providersByName.put(provider.getName(), provider);
         }
 
+        applyOpenAiApiKeyFromEnv(providersByName);
+
         for (SeedCatalog.ModelSeed seed : SeedCatalog.MODELS) {
             if (modelRepository.findByName(seed.name()).isPresent()) {
                 continue;
@@ -109,5 +114,22 @@ public class DevDataSeeder implements ApplicationRunner {
             return ollamaBaseUrl;
         }
         return seed.baseUrl();
+    }
+
+    private void applyOpenAiApiKeyFromEnv(Map<String, Provider> providersByName) {
+        if (openAiApiKey == null || openAiApiKey.isBlank()) {
+            return;
+        }
+        Provider openAi = providersByName.get("OpenAI");
+        if (openAi == null) {
+            openAi = providerRepository.findByName("OpenAI").orElse(null);
+        }
+        if (openAi == null) {
+            log.warn("Seed: provider OpenAI introuvable, clé OPENAI_API_KEY non appliquée");
+            return;
+        }
+        openAi.setApiKey(openAiApiKey.trim());
+        providerRepository.save(openAi);
+        log.info("Seed: clé OpenAI synchronisée depuis OPENAI_API_KEY (non journalisée)");
     }
 }

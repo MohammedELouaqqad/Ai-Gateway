@@ -8,7 +8,7 @@ import com.backend.Ai_Gateway.entity.User;
 import com.backend.Ai_Gateway.enums.RequestStatus;
 import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
-import com.backend.Ai_Gateway.provider.OllamaProvider;
+import com.backend.Ai_Gateway.provider.LLMProviderRouter;
 import com.backend.Ai_Gateway.provider.dto.ChatMessage;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
@@ -29,7 +29,7 @@ public class ChatService {
     private final MessageService messageService;
     private final ModelService modelService;
     private final UsageService usageService;
-    private final OllamaProvider ollamaProvider;
+    private final LLMProviderRouter llmProviderRouter;
 
     public ChatService(
             ConversationRepository conversationRepository,
@@ -38,7 +38,7 @@ public class ChatService {
             MessageService messageService,
             ModelService modelService,
             UsageService usageService,
-            OllamaProvider ollamaProvider
+            LLMProviderRouter llmProviderRouter
     ) {
         this.conversationRepository = conversationRepository;
         this.userRepository = userRepository;
@@ -46,7 +46,7 @@ public class ChatService {
         this.messageService = messageService;
         this.modelService = modelService;
         this.usageService = usageService;
-        this.ollamaProvider = ollamaProvider;
+        this.llmProviderRouter = llmProviderRouter;
     }
 
     public ChatResponse handleChat(Long userId, UserChatRequest userChatRequest) {
@@ -68,7 +68,7 @@ public class ChatService {
         long startedAt = System.currentTimeMillis();
 
         try {
-            ChatResponse response = ollamaProvider.chat(request);
+            ChatResponse response = llmProviderRouter.chat(model.getProvider(), request);
             messageService.createAssistantMessage(response.content(), conversation.getId(), userId);
             usageService.logChatUsage(
                     userId,
