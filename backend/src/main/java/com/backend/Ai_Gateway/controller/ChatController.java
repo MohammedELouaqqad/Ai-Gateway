@@ -1,11 +1,10 @@
 package com.backend.Ai_Gateway.controller;
 
 
-import com.backend.Ai_Gateway.provider.OllamaProvider;
-import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.services.ChatService;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -22,10 +21,8 @@ public class ChatController {
     }
 
     @PostMapping
-    public ChatResponse createChat(@RequestBody UserChatRequest userChatRequest){
+    public ChatResponse createChat(@Valid @RequestBody UserChatRequest userChatRequest) {
         Long userId = 1L;  // Via JWT/Keycloak
-
-
         return chatService.handleChat(userId, userChatRequest);
     }
 }

@@ -83,7 +83,26 @@ public class ProviderService {
     @Transactional
     public Provider changeStatus(Long id) {
         Provider provider = getProviderById(id);
-        provider.setEnabled(!provider.isEnabled());
-        return providerRepository.save(provider);
+        boolean enabling = !provider.isEnabled();
+        provider.setEnabled(enabling);
+        Provider saved = providerRepository.save(provider);
+
+        if (!enabling) {
+            for (var model : modelRepository.findByProvider_Id(id)) {
+                boolean changed = false;
+                if (model.isEnabled()) {
+                    model.setEnabled(false);
+                    changed = true;
+                }
+                if (model.isDefault()) {
+                    model.setDefault(false);
+                    changed = true;
+                }
+                if (changed) {
+                    modelRepository.save(model);
+                }
+            }
+        }
+        return saved;
     }
 }

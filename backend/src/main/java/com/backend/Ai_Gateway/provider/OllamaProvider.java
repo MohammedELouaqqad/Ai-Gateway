@@ -3,9 +3,9 @@ package com.backend.Ai_Gateway.provider;
 import com.backend.Ai_Gateway.provider.dto.ChatMessage;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
+import com.backend.Ai_Gateway.provider.dto.ProviderModelInfo;
 import com.backend.Ai_Gateway.provider.dto.ollama.OllamaChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ollama.OllamaChatResponse;
-import org.aspectj.asm.AsmManager;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -48,7 +48,7 @@ public class OllamaProvider implements LLMProvider {
     }
 
     @Override
-    public List<AsmManager.ModelInfo> models() {
+    public List<ProviderModelInfo> models() {
         return List.of();
     }
 }

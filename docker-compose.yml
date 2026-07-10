@@ -8,6 +8,8 @@
 #
 # Stack complète dans Docker (Ollama doit tourner sur l'hôte) :
 #   docker compose --profile stack up --build
+# Prod-like (seed off, logs quiet) :
+#   SPRING_PROFILES_ACTIVE=prod docker compose --profile stack up --build
 
 services:
   database:

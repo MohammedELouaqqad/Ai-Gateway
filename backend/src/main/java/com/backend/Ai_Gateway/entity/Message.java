@@ -27,6 +27,13 @@ public class Message {
     private String content;
     private Instant createdAt;
 
+    /** Nom technique du modèle ayant généré la réponse (assistant uniquement). */
+    @Column(length = 100)
+    private String modelName;
+
+    /** Libellé affiché du modèle (assistant uniquement). */
+    @Column(length = 150)
+    private String modelDisplayName;
 
     @JsonIgnore
     @ManyToOne

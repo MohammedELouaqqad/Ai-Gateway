@@ -1,10 +1,10 @@
 package com.backend.Ai_Gateway.services;
 
 
+import com.backend.Ai_Gateway.config.ContentLimits;
 import com.backend.Ai_Gateway.entity.Conversation;
 import com.backend.Ai_Gateway.entity.Message;
 import com.backend.Ai_Gateway.entity.Model;
-import com.backend.Ai_Gateway.entity.User;
 import com.backend.Ai_Gateway.enums.RequestStatus;
 import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
@@ -18,6 +18,8 @@ import com.backend.Ai_Gateway.services.dto.UserChatRequest;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 @Service
@@ -53,23 +55,31 @@ public class ChatService {
         userRepository.findById(userId)
                 .orElseThrow(() -> new RessourceNotFoundException("User not Found"));
 
+        String content = userChatRequest.getContent() == null ? "" : userChatRequest.getContent().trim();
+        if (content.isBlank()) {
+            throw new IllegalArgumentException("content: must not be blank");
+        }
+        if (content.length() > ContentLimits.CHAT_MESSAGE_MAX) {
+            throw new IllegalArgumentException(
+                    "content: max " + ContentLimits.CHAT_MESSAGE_MAX + " characters (got " + content.length() + ")"
+            );
+        }
+
         Model model = modelService.resolveActiveModel(userChatRequest.getModel());
         Conversation conversation = getOrCreateConversation(userId, userChatRequest.getConversationId());
         attachModelToConversation(conversation, model);
 
-        messageService.createUserMessage(userChatRequest.getContent(), conversation.getId(), userId);
+        messageService.createUserMessage(content, conversation.getId(), userId);
 
         List<Message> messages = messageService.getMessagesByConversationId(userId, conversation.getId());
-        List<ChatMessage> chatMessages = messages.stream()
-                .map(m -> new ChatMessage(m.getRole(), m.getContent()))
-                .toList();
+        List<ChatMessage> chatMessages = fitToContextBudget(messages);
 
         ChatRequest request = new ChatRequest(model.getName(), chatMessages);
         long startedAt = System.currentTimeMillis();
 
         try {
             ChatResponse response = llmProviderRouter.chat(model.getProvider(), request);
-            messageService.createAssistantMessage(response.content(), conversation.getId(), userId);
+            messageService.createAssistantMessage(response.content(), conversation.getId(), userId, model);
             usageService.logChatUsage(
                     userId,
                     model.getId(),
@@ -103,11 +113,44 @@ public class ChatService {
         return conversationService.createConversation(userId);
     }
 
+    /** Met à jour le modèle courant de la conversation (dernier modèle utilisé). */
     private void attachModelToConversation(Conversation conversation, Model model) {
-        if (conversation.getModel() == null) {
+        if (conversation.getModel() == null || !conversation.getModel().getId().equals(model.getId())) {
             conversation.setModel(model);
             conversation.setUpdatedAt(Instant.now());
             conversationRepository.save(conversation);
         }
+    }
+
+    /**
+     * Garde les messages les plus récents dans un budget caractères pour limiter
+     * le risque de dépasser la fenêtre de contexte du modèle.
+     */
+    static List<ChatMessage> fitToContextBudget(List<Message> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+
+        List<ChatMessage> selected = new ArrayList<>();
+        int used = 0;
+
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            Message m = messages.get(i);
+            String body = m.getContent() == null ? "" : m.getContent();
+            int cost = body.length();
+            if (!selected.isEmpty() && used + cost > ContentLimits.CHAT_CONTEXT_CHAR_BUDGET) {
+                break;
+            }
+            // Toujours inclure au moins le dernier message (même s'il est long)
+            if (selected.isEmpty() && cost > ContentLimits.CHAT_CONTEXT_CHAR_BUDGET) {
+                body = body.substring(0, ContentLimits.CHAT_CONTEXT_CHAR_BUDGET);
+                cost = body.length();
+            }
+            selected.add(new ChatMessage(m.getRole(), body));
+            used += cost;
+        }
+
+        Collections.reverse(selected);
+        return selected;
     }
 }

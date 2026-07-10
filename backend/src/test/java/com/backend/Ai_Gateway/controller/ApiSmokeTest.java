@@ -49,4 +49,20 @@ class ApiSmokeTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").exists());
     }
+
+    @Test
+    void listPromptTemplatesReturnsOk() throws Exception {
+        mockMvc.perform(get("/api/prompt-templates"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void createPromptTemplateWithInvalidBodyReturnsBadRequest() throws Exception {
+        mockMvc.perform(post("/api/prompt-templates")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"","description":"","content":""}
+                                """))
+                .andExpect(status().isBadRequest());
+    }
 }

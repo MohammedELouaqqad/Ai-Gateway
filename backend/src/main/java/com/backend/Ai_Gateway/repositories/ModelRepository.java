@@ -14,4 +14,6 @@ public interface ModelRepository extends JpaRepository<Model, Long> {
     Optional<Model> findByName(String name);
 
     boolean existsByProvider_Id(Long providerId);
+
+    java.util.List<Model> findByProvider_Id(Long providerId);
 }

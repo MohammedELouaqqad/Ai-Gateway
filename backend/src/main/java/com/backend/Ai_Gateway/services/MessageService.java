@@ -6,7 +6,7 @@ import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
 import com.backend.Ai_Gateway.entity.Conversation;
 import com.backend.Ai_Gateway.entity.Message;
-import com.backend.Ai_Gateway.entity.User;
+import com.backend.Ai_Gateway.entity.Model;
 import com.backend.Ai_Gateway.repositories.ConversationRepository;
 import com.backend.Ai_Gateway.repositories.MessageRepository;
 import com.backend.Ai_Gateway.repositories.UserRepository;
@@ -15,7 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 
 @Service
 public class MessageService {
@@ -57,15 +56,23 @@ public class MessageService {
 
 
     @Transactional
-    public Message createAssistantMessage(String contenu,Long conversationId, Long userId){
-        Conversation conversation= conversationRepository.findById(conversationId)
-                .orElseThrow(()-> new RessourceNotFoundException("Conversation not found"));
-        if(conversation.getUser().getId().equals(userId)){
-            Message message=new Message();
+    public Message createAssistantMessage(String contenu, Long conversationId, Long userId, Model model) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RessourceNotFoundException("Conversation not found"));
+        if (conversation.getUser().getId().equals(userId)) {
+            Message message = new Message();
             message.setConversation(conversation);
             message.setContent(contenu);
             message.setRole(MessageRole.ASSISTANT);
             message.setCreatedAt(Instant.now());
+            if (model != null) {
+                message.setModelName(model.getName());
+                message.setModelDisplayName(
+                        model.getDisplayName() != null && !model.getDisplayName().isBlank()
+                                ? model.getDisplayName()
+                                : model.getName()
+                );
+            }
             modifyDate(conversation.getId());
             messageRepository.save(message);
             return message;

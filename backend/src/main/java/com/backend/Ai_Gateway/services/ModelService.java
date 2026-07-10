@@ -50,15 +50,29 @@ public class ModelService {
         if (modelName != null && !modelName.isBlank()) {
             Model model = modelRepository.findByName(modelName.trim())
                     .orElseThrow(() -> new RessourceNotFoundException("Model not found: " + modelName));
-            if (!model.isEnabled()) {
-                throw new IllegalArgumentException("Model is disabled: " + modelName);
-            }
+            ensureModelUsable(model);
             return model;
         }
 
-        return modelRepository.findByIsDefaultTrue()
-                .filter(Model::isEnabled)
+        Model defaultModel = modelRepository.findByIsDefaultTrue()
                 .orElseThrow(() -> new RessourceNotFoundException("No default model configured"));
+        ensureModelUsable(defaultModel);
+        return defaultModel;
+    }
+
+    private void ensureModelUsable(Model model) {
+        if (!model.isEnabled()) {
+            throw new IllegalArgumentException("Model is disabled: " + model.getName());
+        }
+        var provider = model.getProvider();
+        if (provider == null) {
+            throw new IllegalArgumentException("Model has no provider: " + model.getName());
+        }
+        if (!provider.isEnabled()) {
+            throw new IllegalArgumentException(
+                    "Provider is disabled: " + provider.getName() + ". Activez le fournisseur avant d'utiliser ce modèle."
+            );
+        }
     }
 
     @Transactional
@@ -118,7 +132,17 @@ public class ModelService {
     @Transactional
     public Model changeStatus(Long id) {
         Model model = getById(id);
-        model.setEnabled(!model.isEnabled());
+        boolean enabling = !model.isEnabled();
+        if (enabling) {
+            var provider = model.getProvider();
+            if (provider == null || !provider.isEnabled()) {
+                String providerName = provider != null ? provider.getName() : "inconnu";
+                throw new IllegalArgumentException(
+                        "Impossible d'activer le modèle : le fournisseur « " + providerName + " » est inactif."
+                );
+            }
+        }
+        model.setEnabled(enabling);
         if (!model.isEnabled() && model.isDefault()) {
             model.setDefault(false);
         }
@@ -127,11 +151,9 @@ public class ModelService {
 
     @Transactional
     public Model defaultModel(Long id) {
-        clearDefaultModel();
         Model model = getById(id);
-        if (!model.isEnabled()) {
-            throw new IllegalArgumentException("Cannot set a disabled model as default");
-        }
+        ensureModelUsable(model);
+        clearDefaultModel();
         model.setDefault(true);
         return modelRepository.save(model);
     }
