@@ -1,6 +1,6 @@
 package com.backend.Ai_Gateway.provider;
 
-import com.backend.Ai_Gateway.provider.dto.ChatMessage;
+import com.backend.Ai_Gateway.provider.dto.ChatChunk;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.provider.dto.ProviderModelInfo;
@@ -9,10 +9,13 @@ import com.backend.Ai_Gateway.provider.dto.ollama.OllamaChatResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
-import java.util.stream.Stream;
 
+/**
+ * Provider Ollama (chat sync local). Streaming production : {@link LLMProviderRouter#stream}.
+ */
 @Service
 public class OllamaProvider implements LLMProvider {
 
@@ -43,8 +46,8 @@ public class OllamaProvider implements LLMProvider {
     }
 
     @Override
-    public Stream<ChatMessage> stream(ChatRequest request) {
-        return Stream.empty();
+    public Flux<ChatChunk> stream(ChatRequest request) {
+        return Flux.empty();
     }
 
     @Override

@@ -27,6 +27,8 @@ export interface ApiModel {
   enabled: boolean
   default: boolean
   isDefault?: boolean
+  /** Hérité du provider type (Ollama/OpenAI/Azure = true). */
+  supportsStreaming?: boolean
   createdAt?: string
   provider?: ApiProvider
 }
@@ -80,6 +82,18 @@ export interface ChatResponse {
   content: string
   promptTokens: number | null
   completionTokens: number | null
+}
+
+/** Format pivot SSE (backend ChatChunk). */
+export interface ChatChunk {
+  content: string
+  done: boolean
+  finishReason?: string | null
+  usage?: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  } | null
 }
 
 export interface UsageSummary {

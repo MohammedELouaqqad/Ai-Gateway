@@ -1,6 +1,8 @@
 package com.backend.Ai_Gateway.entity;
 
 
+import com.backend.Ai_Gateway.enums.ProviderType;
+import com.backend.Ai_Gateway.provider.ProviderCapabilities;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
@@ -38,4 +40,15 @@ public class Model {
     @JsonIgnore
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "model")
     private List<UsageLog> usageLogs;
+
+    /**
+     * Hérité du type de provider — pas de config par modèle.
+     * Tout nouveau modèle Ollama/OpenAI/Azure streame automatiquement.
+     */
+    @JsonProperty("supportsStreaming")
+    @Transient
+    public boolean isSupportsStreaming() {
+        ProviderType type = provider != null ? provider.getType() : null;
+        return ProviderCapabilities.supportsStreaming(type);
+    }
 }

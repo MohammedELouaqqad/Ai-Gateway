@@ -171,7 +171,7 @@ export function PromptTemplatesPage() {
                 {formatCharCount(form.content.length, CONTENT_LIMITS.TEMPLATE_CONTENT_MAX)}
                 {' · '}Utilisez {'{{content}}'} pour injecter le texte saisi dans le chat
               </p>
-            </div>
+          </div>
             <div className="form-actions">
               <button type="submit" className="btn btn--primary" disabled={saving}>
                 {saving ? 'Enregistrement…' : editingId != null ? 'Mettre à jour' : 'Créer'}
@@ -181,7 +181,7 @@ export function PromptTemplatesPage() {
                   Annuler
                 </button>
               )}
-            </div>
+          </div>
           </form>
         </div>
       </section>

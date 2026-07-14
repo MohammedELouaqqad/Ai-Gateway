@@ -1,47 +1,92 @@
 package com.backend.Ai_Gateway.provider;
 
 import com.backend.Ai_Gateway.entity.Provider;
-import com.backend.Ai_Gateway.enums.MessageRole;
-import com.backend.Ai_Gateway.enums.ProviderType;
+import com.backend.Ai_Gateway.provider.dto.ChatChunk;
 import com.backend.Ai_Gateway.provider.dto.ChatMessage;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.provider.dto.ollama.OllamaChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ollama.OllamaChatResponse;
+import com.backend.Ai_Gateway.provider.dto.ollama.OllamaStreamChunkDto;
 import com.backend.Ai_Gateway.provider.dto.openai.OpenAIChatRequest;
 import com.backend.Ai_Gateway.provider.dto.openai.OpenAIChatResponse;
 import com.backend.Ai_Gateway.provider.dto.openai.OpenAIMessage;
+import com.backend.Ai_Gateway.provider.dto.openai.OpenAIStreamChatRequest;
+import com.backend.Ai_Gateway.provider.dto.openai.OpenAiStreamChunkDto;
+import com.backend.Ai_Gateway.provider.mapper.OllamaChunkMapper;
+import com.backend.Ai_Gateway.provider.mapper.OpenAiChunkMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Flux;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 
+/**
+ * Point d'entrée production pour Ollama / OpenAI.
+ * Routing par {@code switch (provider.getType())} — pas encore de Map&lt;LLMProvider&gt;.
+ * {@link #chat} = RestClient sync ; {@link #stream} = WebClient + ChatChunk.
+ */
 @Service
 public class LLMProviderRouter {
 
     private final RestClient.Builder restClientBuilder;
+    private final WebClient.Builder webClientBuilder;
+    private final ObjectMapper objectMapper;
     private final String defaultOllamaBaseUrl;
     private final String defaultOpenAiApiKey;
 
     public LLMProviderRouter(
             RestClient.Builder restClientBuilder,
+            WebClient.Builder webClientBuilder,
+            ObjectMapper objectMapper,
             @Value("${app.ollama.base-url:http://localhost:11434}") String defaultOllamaBaseUrl,
             @Value("${OPENAI_API_KEY:${app.openai.api-key:}}") String defaultOpenAiApiKey
     ) {
         this.restClientBuilder = restClientBuilder;
+        this.webClientBuilder = webClientBuilder;
+        this.objectMapper = objectMapper;
         this.defaultOllamaBaseUrl = defaultOllamaBaseUrl;
         this.defaultOpenAiApiKey = defaultOpenAiApiKey;
     }
 
+    /** Appel non-streaming (existant, inchangé fonctionnellement). */
     public ChatResponse chat(Provider provider, ChatRequest request) {
         if (provider == null) {
             throw new IllegalArgumentException("Provider is required");
         }
         return switch (provider.getType()) {
             case OLLAMA -> chatOllama(provider, request);
-            case OPENAI -> chatOpenAi(provider, request);
+            case OPENAI, AZURE_OPENAI -> chatOpenAi(provider, request);
             default -> throw new IllegalArgumentException("Provider type not supported for chat: " + provider.getType());
+        };
+    }
+
+    /** Appel streaming : Flux de {@link ChatChunk} (aucun merge avant émission). */
+    public Flux<ChatChunk> stream(Provider provider, ChatRequest request) {
+        if (provider == null) {
+            return Flux.error(new IllegalArgumentException("Provider is required"));
+        }
+        if (!ProviderCapabilities.supportsStreaming(provider.getType())) {
+            return Flux.error(new IllegalArgumentException(
+                    "Streaming not supported for provider type: " + provider.getType()
+                    + ". Add a provider adapter (DTO + mapper) — models inherit streaming automatically."
+            ));
+        }
+        return switch (provider.getType()) {
+            case OLLAMA -> streamOllama(provider, request);
+            // Azure OpenAI uses the same chat-completions SSE protocol as OpenAI
+            case OPENAI, AZURE_OPENAI -> streamOpenAi(provider, request);
+            default -> Flux.error(new IllegalArgumentException(
+                    "Provider type not supported for stream: " + provider.getType()
+            ));
         };
     }
 
@@ -98,6 +143,93 @@ public class LLMProviderRouter {
         Integer completionTokens = response.usage() != null ? response.usage().completionTokens() : 0;
 
         return new ChatResponse(assistantMessage.content(), promptTokens, completionTokens);
+    }
+
+    private Flux<ChatChunk> streamOllama(Provider provider, ChatRequest request) {
+        String baseUrl = resolveBaseUrl(provider.getBaseUrl(), defaultOllamaBaseUrl);
+        WebClient client = webClientBuilder.baseUrl(baseUrl).build();
+        var body = new OllamaChatRequest(request.model(), request.messages(), true);
+
+        return client.post()
+                .uri("/api/chat")
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_NDJSON, MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .retrieve()
+                .bodyToFlux(String.class)
+                .filter(line -> line != null && !line.isBlank())
+                .map(this::parseOllamaLine)
+                .map(OllamaChunkMapper::toChatChunk)
+                .filter(chunk -> chunk.done() || (chunk.content() != null && !chunk.content().isEmpty()));
+    }
+
+    private Flux<ChatChunk> streamOpenAi(Provider provider, ChatRequest request) {
+        String apiKey = resolveOpenAiApiKey(provider);
+        String baseUrl = resolveBaseUrl(provider.getBaseUrl(), "https://api.openai.com/v1");
+        List<OpenAIMessage> messages = request.messages().stream()
+                .map(this::toOpenAiMessage)
+                .toList();
+
+        WebClient client = webClientBuilder
+                .baseUrl(baseUrl)
+                .defaultHeader("Authorization", "Bearer " + apiKey)
+                .build();
+
+        // IMPORTANT: do NOT Accept text/event-stream here — Spring's SSE codec would strip
+        // "data:" prefixes and our line parser would filter everything out (empty stream).
+        // Parse the raw SSE body manually so every OpenAI/Azure model inherits streaming.
+        return client.post()
+                .uri("/chat/completions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON, MediaType.ALL)
+                .bodyValue(OpenAIStreamChatRequest.of(request.model(), messages))
+                .retrieve()
+                .bodyToFlux(DataBuffer.class)
+                .map(this::dataBufferToString)
+                .concatMapIterable(this::splitLines)
+                .map(String::trim)
+                .filter(line -> !line.isEmpty())
+                .filter(line -> line.startsWith("data:"))
+                .map(line -> line.substring("data:".length()).trim())
+                .takeUntil("[DONE]"::equals)
+                .filter(data -> !"[DONE]".equals(data))
+                .map(this::parseOpenAiData)
+                .map(OpenAiChunkMapper::toChatChunk)
+                .filter(chunk -> chunk.done() || (chunk.content() != null && !chunk.content().isEmpty()));
+    }
+
+    private String dataBufferToString(DataBuffer dataBuffer) {
+        try {
+            int size = dataBuffer.readableByteCount();
+            byte[] bytes = new byte[size];
+            dataBuffer.read(bytes);
+            return new String(bytes, StandardCharsets.UTF_8);
+        } finally {
+            DataBufferUtils.release(dataBuffer);
+        }
+    }
+
+    private List<String> splitLines(String chunk) {
+        if (chunk == null || chunk.isEmpty()) {
+            return List.of();
+        }
+        return Arrays.asList(chunk.split("\\r?\\n", -1));
+    }
+
+    private OllamaStreamChunkDto parseOllamaLine(String line) {
+        try {
+            return objectMapper.readValue(line, OllamaStreamChunkDto.class);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Invalid Ollama stream chunk: " + line, ex);
+        }
+    }
+
+    private OpenAiStreamChunkDto parseOpenAiData(String data) {
+        try {
+            return objectMapper.readValue(data, OpenAiStreamChunkDto.class);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Invalid OpenAI stream chunk: " + data, ex);
+        }
     }
 
     private OpenAIMessage toOpenAiMessage(ChatMessage message) {

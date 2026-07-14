@@ -3,7 +3,7 @@ import { Pencil, Trash2 } from 'lucide-react'
 import { AppLayout } from '../layouts/AppLayout'
 import { Badge } from '../components/Badge'
 import { ApiStateBanner } from '../components/ApiStateBanner'
-import { sendChatMessage } from '../api/chat'
+import { sendChatStream } from '../api/chat'
 import {
   createConversation,
   deleteConversation,
@@ -44,6 +44,11 @@ export function ChatPage() {
     selectedModelInfo?.displayName
     ?? selectedModelInfo?.name
     ?? selectedModel
+  const selectedSupportsStreaming = selectedModelInfo?.supportsStreaming !== false
+    && (selectedModelInfo?.supportsStreaming === true
+      || selectedModelInfo?.provider?.type === 'OLLAMA'
+      || selectedModelInfo?.provider?.type === 'OPENAI'
+      || selectedModelInfo?.provider?.type === 'AZURE_OPENAI')
   const headerModelLabel =
     selectedModelLabel
     || activeConversation?.model?.displayName
@@ -229,18 +234,41 @@ export function ChatPage() {
       role: 'USER',
       content,
     }
-    setMessages((prev) => [...prev, optimisticUser])
+    const optimisticAssistant: ApiMessage = {
+      id: Date.now() + 1,
+      role: 'ASSISTANT',
+      content: '',
+      modelDisplayName: selectedModelLabel || null,
+      modelName: selectedModel || null,
+    }
+    setMessages((prev) => [...prev, optimisticUser, optimisticAssistant])
 
     const controller = new AbortController()
     abortRef.current = controller
 
     try {
-      const response = await sendChatMessage({
-        conversationId: activeConversationId,
-        content,
-        model: selectedModel,
-        stream: false,
-      }, controller.signal)
+      await sendChatStream(
+        {
+          conversationId: activeConversationId,
+          content,
+          model: selectedModel,
+          stream: true,
+        },
+        {
+          onChunk: (chunk) => {
+            if (chunk.done) return
+            if (!chunk.content) return
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === optimisticAssistant.id
+                  ? { ...m, content: `${m.content}${chunk.content}` }
+                  : m,
+              ),
+            )
+          },
+        },
+        controller.signal,
+      )
 
       if (!activeConversationId) {
         const updated = await loadConversations()
@@ -252,20 +280,17 @@ export function ChatPage() {
         await loadMessages(activeConversationId)
         await loadConversations()
       }
-
-      if (!response.content) {
-        setMessages((prev) => [
-          ...prev.filter((m) => m.id !== optimisticUser.id),
-          optimisticUser,
-        ])
-      }
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') {
-        setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id))
+        setMessages((prev) =>
+          prev.filter((m) => m.id !== optimisticUser.id && m.id !== optimisticAssistant.id),
+        )
         setInput(content)
         return
       }
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id))
+      setMessages((prev) =>
+        prev.filter((m) => m.id !== optimisticUser.id && m.id !== optimisticAssistant.id),
+      )
       setInput(content)
       setError(e instanceof Error ? e.message : 'Erreur envoi message')
     } finally {
@@ -377,6 +402,11 @@ export function ChatPage() {
               <p className="chat-toolbar__meta">
                 {messages.length} message{messages.length !== 1 ? 's' : ''}
                 {headerModelLabel ? ` · ${headerModelLabel}` : ''}
+                {selectedModelInfo
+                  ? selectedSupportsStreaming
+                    ? ' · Stream'
+                    : ' · Sync'
+                  : ''}
               </p>
             </div>
             <div className="chat-toolbar__actions">
@@ -408,10 +438,12 @@ export function ChatPage() {
               const roleClass = isUser ? 'user' : isSystem ? 'system' : 'assistant'
               const label = isUser ? 'Vous' : isSystem ? 'Système' : 'Assistant'
               const modelLabel = assistantModelLabel(m)
+              const isStreamingPlaceholder =
+                sending && !isUser && !isSystem && !m.content && m === messages[messages.length - 1]
               return (
                 <article
                   key={m.id}
-                  className={`chat-message chat-message--${roleClass}`}
+                  className={`chat-message chat-message--${roleClass}${isStreamingPlaceholder ? ' chat-message--streaming' : ''}`}
                 >
                   <div className="chat-message__avatar" aria-hidden="true">
                     {isUser ? 'V' : isSystem ? 'S' : 'AI'}
@@ -425,47 +457,36 @@ export function ChatPage() {
                           <span className="chat-message__model">{modelLabel}</span>
                         </>
                       )}
-                      {m.createdAt && (
+                      {isStreamingPlaceholder ? (
+                        <>
+                          <span className="chat-message__sep" aria-hidden="true">·</span>
+                          <span className="chat-message__status">En train d’écrire…</span>
+                        </>
+                      ) : m.createdAt ? (
                         <>
                           <span className="chat-message__sep" aria-hidden="true">·</span>
                           <time className="chat-message__time mono" dateTime={m.createdAt}>
                             {formatTime(m.createdAt)}
                           </time>
                         </>
-                      )}
+                      ) : null}
                     </header>
-                    <div className="chat-message__bubble">{m.content}</div>
+                    <div className={`chat-message__bubble${isStreamingPlaceholder ? ' chat-message__bubble--typing' : ''}`}>
+                      {isStreamingPlaceholder ? (
+                        <p className="chat-typing" aria-live="polite">
+                          <span className="chat-typing__dots" aria-hidden="true">
+                            <span /><span /><span />
+                          </span>
+                          Génération en cours…
+                        </p>
+                      ) : (
+                        m.content
+                      )}
+                    </div>
                   </div>
                 </article>
               )
             })}
-
-            {sending && (
-              <article className="chat-message chat-message--assistant chat-message--streaming">
-                <div className="chat-message__avatar" aria-hidden="true">AI</div>
-                <div className="chat-message__body">
-                  <header className="chat-message__meta">
-                    <span className="chat-message__author">Assistant</span>
-                    {selectedModelLabel && (
-                      <>
-                        <span className="chat-message__sep" aria-hidden="true">·</span>
-                        <span className="chat-message__model">{selectedModelLabel}</span>
-                      </>
-                    )}
-                    <span className="chat-message__sep" aria-hidden="true">·</span>
-                    <span className="chat-message__status">En train d’écrire…</span>
-                  </header>
-                  <div className="chat-message__bubble chat-message__bubble--typing">
-                    <p className="chat-typing" aria-live="polite">
-                      <span className="chat-typing__dots" aria-hidden="true">
-                        <span /><span /><span />
-                      </span>
-                      Génération en cours…
-                    </p>
-                  </div>
-                </div>
-              </article>
-            )}
 
             {!loading && messages.length === 0 && !sending && (
               <p className="chat-messages__empty">Envoyez un message pour démarrer.</p>

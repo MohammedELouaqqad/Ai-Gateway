@@ -1,13 +1,14 @@
 package com.backend.Ai_Gateway.provider;
 
-import com.backend.Ai_Gateway.provider.dto.ChatMessage;
+import com.backend.Ai_Gateway.provider.dto.ChatChunk;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.provider.dto.ProviderModelInfo;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
-import java.util.stream.Stream;
 
+/** Stub — chat/stream production via {@link LLMProviderRouter}. */
 public class OpenAIProvider implements LLMProvider {
     @Override
     public ChatResponse chat(ChatRequest request) {
@@ -15,8 +16,8 @@ public class OpenAIProvider implements LLMProvider {
     }
 
     @Override
-    public Stream<ChatMessage> stream(ChatRequest request) {
-        return Stream.empty();
+    public Flux<ChatChunk> stream(ChatRequest request) {
+        return Flux.empty();
     }
 
     @Override
