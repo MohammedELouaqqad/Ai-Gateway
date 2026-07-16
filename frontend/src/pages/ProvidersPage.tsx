@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { AppLayout } from '../layouts/AppLayout'
 import { Badge } from '../components/Badge'
 import { ApiStateBanner } from '../components/ApiStateBanner'
+import { isAdmin } from '../auth/roles'
 import {
   createProvider,
   deleteProvider,
@@ -10,7 +11,7 @@ import {
   updateProvider,
 } from '../api/providers'
 import type { ApiProvider, ProviderLocation, ProviderType } from '../api/types'
-import { pages } from '../i18n/fr'
+import { useI18n } from '../i18n'
 import { providerToUiType } from '../utils/mappers'
 
 const emptyProviderForm = {
@@ -23,15 +24,18 @@ const emptyProviderForm = {
 
 function ProviderRow({
   provider,
+  canMutate,
   onToggle,
   onRename,
   onDelete,
 }: {
   provider: ApiProvider
+  canMutate: boolean
   onToggle: (id: number) => void
   onRename: (provider: ApiProvider) => void
   onDelete: (id: number, name: string) => void
 }) {
+  const { common, pages } = useI18n()
   const type = providerToUiType(provider)
   const healthVariant = provider.enabled ? 'success' : 'secondary'
   return (
@@ -51,42 +55,46 @@ function ProviderRow({
       </td>
       <td>
         <Badge variant={healthVariant} dot>
-          {provider.enabled ? 'Actif' : 'Inactif'}
+          {provider.enabled ? common.active : common.inactive}
         </Badge>
       </td>
       <td className="mono">{provider.priority ?? '—'}</td>
-      <td>{provider.location === 'LOCAL' ? 'Interne' : 'Cloud'}</td>
+      <td>{provider.location === 'LOCAL' ? pages.providers.internal : pages.providers.cloud}</td>
       <td className="mono" style={{ fontSize: '0.75rem' }}>{provider.type}</td>
-      <td>
-        <div className="table-actions">
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
-            onClick={() => onRename(provider)}
-          >
-            Renommer
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
-            onClick={() => onToggle(provider.id)}
-          >
-            {provider.enabled ? 'Désactiver' : 'Activer'}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm btn--danger"
-            onClick={() => onDelete(provider.id, provider.name)}
-          >
-            Supprimer
-          </button>
-        </div>
-      </td>
+      {canMutate && (
+        <td>
+          <div className="table-actions">
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => onRename(provider)}
+            >
+              {common.rename}
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => onToggle(provider.id)}
+            >
+              {provider.enabled ? common.disable : common.enable}
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm btn--danger"
+              onClick={() => onDelete(provider.id, provider.name)}
+            >
+              {common.delete}
+            </button>
+          </div>
+        </td>
+      )}
     </tr>
   )
 }
 
 export function ProvidersPage() {
+  const { pages, common } = useI18n()
+  const p = pages.providers
   const [providers, setProviders] = useState<ApiProvider[]>([])
   const [form, setForm] = useState(emptyProviderForm)
   const [loading, setLoading] = useState(true)
@@ -105,7 +113,7 @@ export function ProvidersPage() {
     loadProviders()
       .catch((e) => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Erreur chargement')
+          setError(e instanceof Error ? e.message : common.loadError)
         }
       })
       .finally(() => {
@@ -114,7 +122,7 @@ export function ProvidersPage() {
     return () => {
       cancelled = true
     }
-  }, [loadProviders])
+  }, [loadProviders, common.loadError])
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
@@ -134,7 +142,7 @@ export function ProvidersPage() {
       setForm(emptyProviderForm)
       await loadProviders()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur création provider')
+      setError(err instanceof Error ? err.message : common.loadError)
     } finally {
       setSaving(false)
     }
@@ -146,14 +154,14 @@ export function ProvidersPage() {
       await toggleProviderStatus(id)
       await loadProviders()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur mise à jour')
+      setError(e instanceof Error ? e.message : common.loadError)
     }
   }
 
   async function handleRename(provider: ApiProvider) {
-    const name = window.prompt('Nom du fournisseur', provider.name)
+    const name = window.prompt(p.renameNamePrompt, provider.name)
     if (!name?.trim()) return
-    const baseUrl = window.prompt('URL de base', provider.baseUrl ?? '')
+    const baseUrl = window.prompt(p.renameUrlPrompt, provider.baseUrl ?? '')
     if (baseUrl === null) return
 
     setError(null)
@@ -165,73 +173,80 @@ export function ProvidersPage() {
       })
       await loadProviders()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur renommage')
+      setError(e instanceof Error ? e.message : common.loadError)
     }
   }
 
   async function handleDelete(id: number, name: string) {
-    if (!window.confirm(`Supprimer le fournisseur « ${name} » ?`)) return
+    if (!window.confirm(p.deleteConfirm.replace('{name}', name))) return
 
     setError(null)
     try {
       await deleteProvider(id)
       await loadProviders()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur suppression')
+      setError(e instanceof Error ? e.message : common.loadError)
     }
   }
 
-  const localCount = providers.filter((p) => providerToUiType(p) === 'onprem').length
-  const activeCount = providers.filter((p) => p.enabled).length
+  const localCount = providers.filter((pr) => providerToUiType(pr) === 'onprem').length
+  const activeCount = providers.filter((pr) => pr.enabled).length
+  const canMutate = isAdmin()
 
   return (
-    <AppLayout breadcrumbs={[{ label: 'AI Gateway' }, { label: pages.providers.title }]}>
+    <AppLayout breadcrumbs={[{ label: 'AI Gateway' }, { label: p.title }]}>
       <ApiStateBanner loading={loading} error={error} />
 
       <header className="page-header">
-        <h1>{pages.providers.title}</h1>
-        <p>{pages.providers.subtitle}</p>
+        <h1>{p.title}</h1>
+        <p>{p.subtitle}</p>
+        {!canMutate && (
+          <p className="section__subtitle" style={{ marginTop: '0.5rem' }}>
+            {common.readOnly}
+          </p>
+        )}
       </header>
 
-      <div className="sovereignty-card" role="region" aria-label="Souveraineté">
+      <div className="sovereignty-card" role="region" aria-label={p.sovereignty}>
         <div className="sovereignty-card__content">
-          <h2>Souveraineté</h2>
-          <p>Catalogue documenté (Ollama, OpenAI, Azure, SGLang, vLLM). Activez les fournisseurs prêts à l&apos;emploi.</p>
+          <h2>{p.sovereignty}</h2>
+          <p>{p.sovereigntyDesc}</p>
         </div>
         <div className="sovereignty-card__stats">
           <div>
             <div className="sovereignty-card__stat-value">{localCount}</div>
-            <div className="sovereignty-card__stat-label">Moteurs local</div>
+            <div className="sovereignty-card__stat-label">{p.localEngines}</div>
           </div>
           <div>
             <div className="sovereignty-card__stat-value">{activeCount}</div>
-            <div className="sovereignty-card__stat-label">Actifs</div>
+            <div className="sovereignty-card__stat-label">{p.actives}</div>
           </div>
         </div>
       </div>
 
+      {canMutate && (
       <section className="section card">
         <div className="card__header">
-          <h2 className="card__title">Ajouter un fournisseur</h2>
+          <h2 className="card__title">{p.addTitle}</h2>
           <p className="card__subtitle" style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-            Créé inactif — activez-le dans le tableau une fois configuré.
+            {p.addHint}
           </p>
         </div>
         <div className="card__body">
-          <form className="form-row" onSubmit={(e) => void handleCreate(e)} aria-label="Créer un fournisseur">
+          <form className="form-row" onSubmit={(e) => void handleCreate(e)} aria-label={p.createAria}>
             <div className="form-group">
-              <label className="form-label" htmlFor="provider-name">Nom</label>
+              <label className="form-label" htmlFor="provider-name">{common.name}</label>
               <input
                 id="provider-name"
                 className="form-input"
                 value={form.name}
                 onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder="Ollama Local"
+                placeholder={p.namePlaceholder}
                 required
               />
             </div>
             <div className="form-group">
-              <label className="form-label" htmlFor="provider-url">URL de base</label>
+              <label className="form-label" htmlFor="provider-url">{p.baseUrl}</label>
               <input
                 id="provider-url"
                 className="form-input mono"
@@ -241,7 +256,7 @@ export function ProvidersPage() {
               />
             </div>
             <div className="form-group">
-              <label className="form-label" htmlFor="provider-type">Type API</label>
+              <label className="form-label" htmlFor="provider-type">{common.apiType}</label>
               <select
                 id="provider-type"
                 className="form-select"
@@ -256,7 +271,7 @@ export function ProvidersPage() {
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label" htmlFor="provider-location">Localisation</label>
+              <label className="form-label" htmlFor="provider-location">{common.location}</label>
               <select
                 id="provider-location"
                 className="form-select"
@@ -269,19 +284,23 @@ export function ProvidersPage() {
             </div>
             <div className="form-group" style={{ alignSelf: 'end' }}>
               <button type="submit" className="btn btn--primary" disabled={saving}>
-                {saving ? 'Création…' : '+ Ajouter'}
+                {saving ? common.creating : common.add}
               </button>
             </div>
           </form>
         </div>
       </section>
+      )}
 
       <section className="section">
         <div className="section__header">
           <div>
-            <h2 className="section__title">Fournisseurs</h2>
+            <h2 className="section__title">{p.title}</h2>
             <p className="section__subtitle">
-              {providers.length} configuré(s) · {activeCount} actif(s) · {localCount} local
+              {p.listMeta
+                .replace('{n}', String(providers.length))
+                .replace('{active}', String(activeCount))
+                .replace('{local}', String(localCount))}
             </p>
           </div>
         </div>
@@ -291,13 +310,13 @@ export function ProvidersPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th scope="col">Nom</th>
-                  <th scope="col">Type</th>
-                  <th scope="col">Statut</th>
-                  <th scope="col">Priorité</th>
-                  <th scope="col">Localisation</th>
-                  <th scope="col">Type API</th>
-                  <th scope="col">Actions</th>
+                  <th scope="col">{common.name}</th>
+                  <th scope="col">{common.type}</th>
+                  <th scope="col">{common.status}</th>
+                  <th scope="col">{common.priority}</th>
+                  <th scope="col">{common.location}</th>
+                  <th scope="col">{common.apiType}</th>
+                  {canMutate && <th scope="col">{common.actions}</th>}
                 </tr>
               </thead>
               <tbody>
@@ -305,14 +324,15 @@ export function ProvidersPage() {
                   <ProviderRow
                     key={provider.id}
                     provider={provider}
+                    canMutate={canMutate}
                     onToggle={(id) => void handleToggle(id)}
-                    onRename={(p) => void handleRename(p)}
+                    onRename={(pr) => void handleRename(pr)}
                     onDelete={(id, name) => void handleDelete(id, name)}
                   />
                 ))}
                 {!loading && providers.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="table-empty">Aucun provider configuré</td>
+                    <td colSpan={canMutate ? 7 : 6} className="table-empty">{p.empty}</td>
                   </tr>
                 )}
               </tbody>

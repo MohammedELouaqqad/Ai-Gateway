@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 const apiProxyTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:8080'
+const keycloakProxyTarget = process.env.KEYCLOAK_PROXY_TARGET ?? 'http://localhost:8180'
 
 export default defineConfig({
   plugins: [react()],
@@ -27,6 +28,19 @@ export default defineConfig({
             res.setHeader('Connection', 'keep-alive')
             delete proxyRes.headers['content-length']
             delete proxyRes.headers['content-encoding']
+          })
+        },
+      },
+      // Évite CORS navigateur → Keycloak (token password grant en dev).
+      // changeOrigin ferait Host=host.docker.internal en Docker → iss JWT invalide côté backend.
+      // On force Host public (localhost:8180) pour que iss = KEYCLOAK_ISSUER_URI.
+      '/realms': {
+        target: keycloakProxyTarget,
+        changeOrigin: true,
+        configure: (proxy) => {
+          const publicHost = process.env.KEYCLOAK_PUBLIC_HOST ?? 'localhost:8180'
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('Host', publicHost)
           })
         },
       },

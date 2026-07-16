@@ -19,11 +19,18 @@ public final class OpenAiChunkMapper {
                 (dto.choices() != null && !dto.choices().isEmpty()) ? dto.choices().get(0) : null;
 
         String finishReason = choice != null ? choice.finishReason() : null;
-        boolean done = finishReason != null || dto.usage() != null;
+        String deltaContent = choice != null && choice.delta() != null ? choice.delta().content() : null;
+        boolean hasUsage = dto.usage() != null;
+        boolean done = finishReason != null || hasUsage;
+
+        // OpenAI peut envoyer le dernier fragment de texte + finish_reason dans le même event
+        if (done && deltaContent != null && !deltaContent.isEmpty() && !hasUsage) {
+            return ChatChunk.delta(deltaContent);
+        }
 
         if (done) {
             String reason = finishReason != null && !finishReason.isBlank() ? finishReason : "stop";
-            ChatChunk.TokenUsage usage = null;
+            ChatChunk.TokenUsage usage;
             if (dto.usage() != null) {
                 Integer prompt = dto.usage().promptTokens();
                 Integer completion = dto.usage().completionTokens();
@@ -43,7 +50,6 @@ public final class OpenAiChunkMapper {
             return ChatChunk.completed(reason, usage);
         }
 
-        String content = choice != null && choice.delta() != null ? choice.delta().content() : "";
-        return ChatChunk.delta(content == null ? "" : content);
+        return ChatChunk.delta(deltaContent == null ? "" : deltaContent);
     }
 }

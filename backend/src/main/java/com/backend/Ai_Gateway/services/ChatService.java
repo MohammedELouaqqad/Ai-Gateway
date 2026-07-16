@@ -5,7 +5,9 @@ import com.backend.Ai_Gateway.config.ContentLimits;
 import com.backend.Ai_Gateway.entity.Conversation;
 import com.backend.Ai_Gateway.entity.Message;
 import com.backend.Ai_Gateway.entity.Model;
+import com.backend.Ai_Gateway.enums.ProviderType;
 import com.backend.Ai_Gateway.enums.RequestStatus;
+import com.backend.Ai_Gateway.exceptions.ProviderNotImplementedException;
 import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
 import com.backend.Ai_Gateway.provider.LLMProviderRouter;
@@ -31,6 +33,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 public class ChatService {
+
+    private static final long STREAM_TIMEOUT_MS = 300_000L;
 
     private final ConversationRepository conversationRepository;
     private final UserRepository userRepository;
@@ -59,7 +63,7 @@ public class ChatService {
     }
 
     public ChatResponse handleChat(Long userId, UserChatRequest userChatRequest) {
-        PreparedChat prepared = prepareChat(userId, userChatRequest);
+        PreparedChat prepared = prepareChat(userId, userChatRequest, false);
         long startedAt = System.currentTimeMillis();
 
         try {
@@ -81,11 +85,11 @@ public class ChatService {
 
     /**
      * Streaming SSE : chaque {@link ChatChunk} est relayé immédiatement.
-     * Si le provider ne stream pas encore, fallback sync (un delta + done).
-     * À la fin du flux, le contenu accumulé est persisté comme un {@link ChatResponse}.
+     * L'adaptateur stream est validé dans {@link #prepareChat} avant tout
+     * {@link SseEmitter} (sinon 501 JSON via GlobalExceptionHandler).
      */
     public SseEmitter handleChatStream(Long userId, UserChatRequest userChatRequest) {
-        PreparedChat prepared = prepareChat(userId, userChatRequest);
+        PreparedChat prepared = prepareChat(userId, userChatRequest, true);
         long startedAt = System.currentTimeMillis();
 
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
@@ -116,13 +120,7 @@ public class ChatService {
         emitter.onError(ex -> cancelUpstream.run());
 
         var provider = prepared.model().getProvider();
-        reactor.core.publisher.Flux<ChatChunk> chunkFlux = ProviderCapabilities.supportsStreaming(
-                provider != null ? provider.getType() : null
-        )
-                ? llmProviderRouter.stream(provider, prepared.request())
-                : syncAsChunkFlux(provider, prepared.request());
-
-        Disposable subscription = chunkFlux
+        Disposable subscription = llmProviderRouter.stream(provider, prepared.request())
                 .subscribe(
                         chunk -> {
                             try {
@@ -192,27 +190,7 @@ public class ChatService {
         return emitter;
     }
 
-    /** Providers sans adaptateur stream : répond en 2 chunks (delta contenu + done). */
-    private reactor.core.publisher.Flux<ChatChunk> syncAsChunkFlux(
-            com.backend.Ai_Gateway.entity.Provider provider,
-            ChatRequest request
-    ) {
-        return reactor.core.publisher.Flux.defer(() -> {
-            ChatResponse response = llmProviderRouter.chat(provider, request);
-            String content = response.content() != null ? response.content() : "";
-            return reactor.core.publisher.Flux.just(
-                    ChatChunk.delta(content),
-                    ChatChunk.completed(
-                            "stop",
-                            ChatChunk.TokenUsage.of(response.promptTokens(), response.completionTokens())
-                    )
-            );
-        });
-    }
-
-    private static final long STREAM_TIMEOUT_MS = 300_000L;
-
-    private PreparedChat prepareChat(Long userId, UserChatRequest userChatRequest) {
+    private PreparedChat prepareChat(Long userId, UserChatRequest userChatRequest, boolean streaming) {
         userRepository.findById(userId)
                 .orElseThrow(() -> new RessourceNotFoundException("User not Found"));
 
@@ -227,6 +205,8 @@ public class ChatService {
         }
 
         Model model = modelService.resolveActiveModel(userChatRequest.getModel());
+        ensureAdapterAvailable(model, streaming);
+
         Conversation conversation = getOrCreateConversation(userId, userChatRequest.getConversationId());
         attachModelToConversation(conversation, model);
 
@@ -236,6 +216,17 @@ public class ChatService {
         List<ChatMessage> chatMessages = fitToContextBudget(messages);
         ChatRequest request = new ChatRequest(model.getName(), chatMessages);
         return new PreparedChat(model, conversation, request);
+    }
+
+    /** Avant persistence du message user et avant tout SseEmitter. */
+    private void ensureAdapterAvailable(Model model, boolean streaming) {
+        ProviderType type = model.getProvider().getType();
+        boolean ok = streaming
+                ? ProviderCapabilities.hasStreamAdapter(type)
+                : ProviderCapabilities.hasChatAdapter(type);
+        if (!ok) {
+            throw new ProviderNotImplementedException(type);
+        }
     }
 
     private void persistSuccess(Long userId, PreparedChat prepared, ChatResponse response, long latencyMs) {

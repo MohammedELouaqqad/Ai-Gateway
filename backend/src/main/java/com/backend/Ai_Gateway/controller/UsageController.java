@@ -2,6 +2,7 @@ package com.backend.Ai_Gateway.controller;
 
 import com.backend.Ai_Gateway.entity.UsageLog;
 import com.backend.Ai_Gateway.services.UsageService;
+import com.backend.Ai_Gateway.services.UserService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -13,14 +14,16 @@ import java.util.Map;
 public class UsageController {
 
     private final UsageService usageService;
+    private final UserService userService;
 
-    public UsageController(UsageService usageService) {
+    public UsageController(UsageService usageService, UserService userService) {
         this.usageService = usageService;
+        this.userService = userService;
     }
 
     @GetMapping("/summary")
     public Map<String, Object> summary() {
-        Long userId = 1L;
+        Long userId = userService.requireCurrentUserId();
         List<UsageLog> logs = usageService.getUsageByUserId(userId);
         Map<String, Object> result = new HashMap<>();
         result.put("totalTokens", usageService.getTotalTokensByUserId(userId));
@@ -31,7 +34,6 @@ public class UsageController {
 
     @GetMapping
     public List<UsageLog> list() {
-        Long userId = 1L;
-        return usageService.getUsageByUserId(userId);
+        return usageService.getUsageByUserId(userService.requireCurrentUserId());
     }
 }

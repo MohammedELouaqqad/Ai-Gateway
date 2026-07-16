@@ -1,4 +1,6 @@
+import type { ReactNode } from 'react'
 import { Routes, Route } from 'react-router-dom'
+import { RequireAuth, RequireRole, AccessDeniedPage } from './auth/RequireAuth'
 import { ChatPage } from './pages/ChatPage'
 import { LoginPage } from './pages/LoginPage'
 import { ProfilePage } from './pages/ProfilePage'
@@ -13,22 +15,40 @@ import { RateLimitingPage } from './pages/RateLimitingPage'
 import { ObservabilityPage } from './pages/ObservabilityPage'
 import { SettingsPage } from './pages/SettingsPage'
 
+function Authed({ children }: { children: ReactNode }) {
+  return <RequireAuth>{children}</RequireAuth>
+}
+
+/** Pages de configuration / supervision plateforme — UI réservée ADMIN. */
+function AdminOnly({ children }: { children: ReactNode }) {
+  return (
+    <Authed>
+      <RequireRole role="ADMIN" fallback="/access-denied">
+        {children}
+      </RequireRole>
+    </Authed>
+  )
+}
+
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<ChatPage />} />
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/profile" element={<ProfilePage />} />
-      <Route path="/dashboard" element={<DashboardPage />} />
-      <Route path="/conversations" element={<ConversationsPage />} />
-      <Route path="/prompt-templates" element={<PromptTemplatesPage />} />
-      <Route path="/models" element={<ModelsPage />} />
-      <Route path="/usage" element={<UsagePage />} />
-      <Route path="/providers" element={<ProvidersPage />} />
-      <Route path="/routing" element={<RoutingPage />} />
-      <Route path="/rate-limiting" element={<RateLimitingPage />} />
-      <Route path="/observability" element={<ObservabilityPage />} />
-      <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/access-denied" element={<AccessDeniedPage />} />
+
+      <Route path="/" element={<Authed><ChatPage /></Authed>} />
+      <Route path="/profile" element={<Authed><ProfilePage /></Authed>} />
+      <Route path="/dashboard" element={<Authed><DashboardPage /></Authed>} />
+      <Route path="/conversations" element={<Authed><ConversationsPage /></Authed>} />
+      <Route path="/prompt-templates" element={<Authed><PromptTemplatesPage /></Authed>} />
+      <Route path="/usage" element={<Authed><UsagePage /></Authed>} />
+      <Route path="/settings" element={<Authed><SettingsPage /></Authed>} />
+
+      <Route path="/models" element={<AdminOnly><ModelsPage /></AdminOnly>} />
+      <Route path="/providers" element={<AdminOnly><ProvidersPage /></AdminOnly>} />
+      <Route path="/routing" element={<AdminOnly><RoutingPage /></AdminOnly>} />
+      <Route path="/rate-limiting" element={<AdminOnly><RateLimitingPage /></AdminOnly>} />
+      <Route path="/observability" element={<AdminOnly><ObservabilityPage /></AdminOnly>} />
     </Routes>
   )
 }

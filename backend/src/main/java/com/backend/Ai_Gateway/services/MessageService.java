@@ -80,10 +80,15 @@ public class MessageService {
         throw new UnauthorizedException("Vous n'êtes pas propriétaire de ce message");
     }
 
-    public List<Message> getMessagesByConversationId(Long userId,Long conversationId){
+    public List<Message> getMessagesByConversationId(Long userId, Long conversationId) {
         userRepository.findById(userId)
-                .orElseThrow(()-> new RessourceNotFoundException("User not found"));
-        return messageRepository.findMessagesByConversationId(conversationId);
+                .orElseThrow(() -> new RessourceNotFoundException("User not found"));
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RessourceNotFoundException("Conversation not found"));
+        if (conversation.getUser() == null || !conversation.getUser().getId().equals(userId)) {
+            throw new UnauthorizedException("Vous n'êtes pas propriétaire de cette conversation");
+        }
+        return messageRepository.findByConversation_IdOrderByCreatedAtAscIdAsc(conversationId);
     }
 
 }

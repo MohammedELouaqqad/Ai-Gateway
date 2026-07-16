@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pencil, Trash2 } from 'lucide-react'
 import { AppLayout } from '../layouts/AppLayout'
-import { Badge } from '../components/Badge'
 import { ApiStateBanner } from '../components/ApiStateBanner'
 import { sendChatStream } from '../api/chat'
 import {
@@ -14,7 +13,7 @@ import {
 import { fetchModels } from '../api/models'
 import { fetchPromptTemplates } from '../api/promptTemplates'
 import type { ApiConversation, ApiMessage, ApiModel, ApiPromptTemplate } from '../api/types'
-import { pages } from '../i18n/fr'
+import { useI18n } from '../i18n'
 import {
   applyPromptTemplate,
   CONTENT_LIMITS,
@@ -23,6 +22,8 @@ import {
 import { formatShortDate, formatTime, isModelDefault } from '../utils/mappers'
 
 export function ChatPage() {
+  const { pages, common } = useI18n()
+  const chat = pages.chat
   const messagesRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const [conversations, setConversations] = useState<ApiConversation[]>([])
@@ -39,12 +40,15 @@ export function ChatPage() {
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId)
   const activeModels = models.filter((m) => m.enabled && m.provider?.enabled)
+  const selectableModels = activeModels.filter((m) => m.available !== false)
   const selectedModelInfo = activeModels.find((m) => m.name === selectedModel) ?? models.find((m) => m.name === selectedModel)
   const selectedModelLabel =
     selectedModelInfo?.displayName
     ?? selectedModelInfo?.name
     ?? selectedModel
-  const selectedSupportsStreaming = selectedModelInfo?.supportsStreaming !== false
+  const selectedAvailable = selectedModelInfo?.available !== false
+  const selectedSupportsStreaming = selectedAvailable
+    && selectedModelInfo?.supportsStreaming !== false
     && (selectedModelInfo?.supportsStreaming === true
       || selectedModelInfo?.provider?.type === 'OLLAMA'
       || selectedModelInfo?.provider?.type === 'OPENAI'
@@ -56,7 +60,7 @@ export function ChatPage() {
     || ''
   const inputOverLimit = input.length > CONTENT_LIMITS.CHAT_MESSAGE_MAX
   const inputNearLimit = input.length >= CONTENT_LIMITS.CHAT_MESSAGE_WARN
-  const canSend = !loading && !sending && !!input.trim() && !!selectedModel && !inputOverLimit
+  const canSend = !loading && !sending && !!input.trim() && !!selectedModel && selectedAvailable && !inputOverLimit
   const canApplyTemplate = !sending && !!selectedTemplateId
 
   function assistantModelLabel(message: ApiMessage): string | null {
@@ -81,7 +85,7 @@ export function ChatPage() {
       if (last) {
         last.scrollIntoView({ block: 'end', behavior: 'smooth' })
       } else {
-        container.scrollTop = container.scrollHeight
+      container.scrollTop = container.scrollHeight
       }
     })
   }, [])
@@ -125,7 +129,9 @@ export function ChatPage() {
         setModels(modelData)
         setTemplates(templateData)
 
-        const usable = modelData.filter((m) => m.enabled && m.provider?.enabled)
+        const usable = modelData.filter(
+          (m) => m.enabled && m.provider?.enabled && m.available !== false,
+        )
         const defaultM = usable.find((m) => isModelDefault(m))
         setSelectedModel(defaultM?.name ?? usable[0]?.name ?? '')
 
@@ -180,7 +186,7 @@ export function ChatPage() {
   }
 
   async function handleDeleteConversation(id: number) {
-    if (!window.confirm('Supprimer cette conversation ?')) return
+    if (!window.confirm(chat.deleteConfirm)) return
     setError(null)
     try {
       await deleteConversation(id)
@@ -202,7 +208,7 @@ export function ChatPage() {
   }
 
   async function handleRenameConversation(id: number, currentTitle: string) {
-    const title = window.prompt('Nouveau titre', currentTitle)
+    const title = window.prompt(chat.renamePrompt, currentTitle)
     if (!title?.trim()) return
     setError(null)
     try {
@@ -245,6 +251,7 @@ export function ChatPage() {
 
     const controller = new AbortController()
     abortRef.current = controller
+    let streamedAssistantText = ''
 
     try {
       await sendChatStream(
@@ -258,6 +265,7 @@ export function ChatPage() {
           onChunk: (chunk) => {
             if (chunk.done) return
             if (!chunk.content) return
+            streamedAssistantText += chunk.content
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === optimisticAssistant.id
@@ -270,15 +278,24 @@ export function ChatPage() {
         controller.signal,
       )
 
-      if (!activeConversationId) {
-        const updated = await loadConversations()
-        if (updated.length > 0) {
-          setActiveConversationId(updated[0].id)
-          await loadMessages(updated[0].id)
+      // Stream OK : recharger depuis l’API sans effacer l’affichage en cas d’échec de reload
+      try {
+        if (!activeConversationId) {
+          const updated = await loadConversations()
+          if (updated.length > 0) {
+            setActiveConversationId(updated[0].id)
+            await loadMessages(updated[0].id)
+          }
+        } else {
+          await loadMessages(activeConversationId)
+          await loadConversations()
         }
-      } else {
-        await loadMessages(activeConversationId)
-        await loadConversations()
+      } catch (reloadErr) {
+        setError(
+          reloadErr instanceof Error
+            ? `Réponse reçue, mais rechargement impossible : ${reloadErr.message}`
+            : 'Réponse reçue, mais rechargement impossible',
+        )
       }
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') {
@@ -288,10 +305,21 @@ export function ChatPage() {
         setInput(content)
         return
       }
-      setMessages((prev) =>
-        prev.filter((m) => m.id !== optimisticUser.id && m.id !== optimisticAssistant.id),
-      )
-      setInput(content)
+      // Si du texte a déjà streamé, on le garde visible (évite « flash puis disparition »)
+      if (!streamedAssistantText) {
+        setMessages((prev) =>
+          prev.filter((m) => m.id !== optimisticUser.id && m.id !== optimisticAssistant.id),
+        )
+        setInput(content)
+      } else {
+        try {
+          if (activeConversationId) {
+            await loadMessages(activeConversationId)
+          }
+        } catch {
+          /* garder le texte optimiste */
+        }
+      }
       setError(e instanceof Error ? e.message : 'Erreur envoi message')
     } finally {
       abortRef.current = null
@@ -331,8 +359,8 @@ export function ChatPage() {
     <AppLayout breadcrumbs={[{ label: 'AI Gateway' }, { label: pages.chat.title }]} variant="chat">
       <ApiStateBanner loading={loading} error={error} />
 
-      <div className="chat-shell" aria-label="Interface de chat">
-        <aside className="chat-shell__sidebar" aria-label="Conversations">
+      <div className="chat-shell" aria-label={chat.ariaChat}>
+        <aside className="chat-shell__sidebar" aria-label={chat.ariaConversations}>
           <div className="chat-shell__sidebar-header">
             <button
               type="button"
@@ -340,7 +368,7 @@ export function ChatPage() {
               onClick={() => void handleNewConversation()}
               disabled={loading}
             >
-              + Nouvelle conversation
+              {chat.newConversation}
             </button>
           </div>
           <ul className="chat-conv-list" role="list">
@@ -362,8 +390,8 @@ export function ChatPage() {
                     <button
                       type="button"
                       className="chat-conv-action"
-                      aria-label={`Renommer ${c.title}`}
-                      title="Renommer"
+                      aria-label={`${common.rename} ${c.title}`}
+                      title={common.rename}
                       onClick={(e) => {
                         e.stopPropagation()
                         void handleRenameConversation(c.id, c.title)
@@ -374,8 +402,8 @@ export function ChatPage() {
                     <button
                       type="button"
                       className="chat-conv-action chat-conv-action--danger"
-                      aria-label={`Supprimer ${c.title}`}
-                      title="Supprimer"
+                      aria-label={`${common.delete} ${c.title}`}
+                      title={common.delete}
                       onClick={(e) => {
                         e.stopPropagation()
                         void handleDeleteConversation(c.id)
@@ -388,7 +416,7 @@ export function ChatPage() {
               </li>
             ))}
             {!loading && conversations.length === 0 && (
-              <li className="chat-conv-list__empty">Aucune conversation</li>
+              <li className="chat-conv-list__empty">{chat.noConversations}</li>
             )}
           </ul>
         </aside>
@@ -397,10 +425,13 @@ export function ChatPage() {
           <header className="chat-toolbar">
             <div className="chat-toolbar__info">
               <h1 className="chat-toolbar__title">
-                {activeConversation?.title ?? 'Nouvelle conversation'}
+                {activeConversation?.title ?? chat.newConversationTitle}
               </h1>
               <p className="chat-toolbar__meta">
-                {messages.length} message{messages.length !== 1 ? 's' : ''}
+                {(messages.length === 1 ? chat.messagesCount : chat.messagesCountPlural).replace(
+                  '{n}',
+                  String(messages.length),
+                )}
                 {headerModelLabel ? ` · ${headerModelLabel}` : ''}
                 {selectedModelInfo
                   ? selectedSupportsStreaming
@@ -410,33 +441,34 @@ export function ChatPage() {
               </p>
             </div>
             <div className="chat-toolbar__actions">
-              <label className="visually-hidden" htmlFor="chat-model">Modèle</label>
+              <label className="visually-hidden" htmlFor="chat-model">{chat.model}</label>
               <select
                 className="form-select chat-toolbar__model"
                 id="chat-model"
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
-                disabled={activeModels.length === 0}
+                disabled={selectableModels.length === 0}
               >
-                {activeModels.map((m) => (
-                  <option key={m.id} value={m.name}>
-                    {m.displayName || m.name}
-                    {isModelDefault(m) ? ' (défaut)' : ''}
-                  </option>
-                ))}
+                {activeModels.map((m) => {
+                  const unavailable = m.available === false
+                  return (
+                    <option key={m.id} value={m.name} disabled={unavailable}>
+                      {m.displayName || m.name}
+                      {isModelDefault(m) ? common.defaultSuffix : ''}
+                      {unavailable ? common.unavailable : ''}
+                    </option>
+                  )
+                })}
               </select>
-              <Badge variant={error ? 'error' : 'success'} dot>
-                {error ? 'Erreur' : 'Connecté'}
-              </Badge>
             </div>
           </header>
 
-          <div className="chat-messages" ref={messagesRef} role="log" aria-label="Messages">
+          <div className="chat-messages" ref={messagesRef} role="log" aria-label={chat.ariaMessages}>
             {messages.map((m) => {
               const isUser = m.role === 'USER'
               const isSystem = m.role === 'SYSTEM'
               const roleClass = isUser ? 'user' : isSystem ? 'system' : 'assistant'
-              const label = isUser ? 'Vous' : isSystem ? 'Système' : 'Assistant'
+              const label = isUser ? chat.you : isSystem ? chat.system : chat.assistant
               const modelLabel = assistantModelLabel(m)
               const isStreamingPlaceholder =
                 sending && !isUser && !isSystem && !m.content && m === messages[messages.length - 1]
@@ -460,7 +492,7 @@ export function ChatPage() {
                       {isStreamingPlaceholder ? (
                         <>
                           <span className="chat-message__sep" aria-hidden="true">·</span>
-                          <span className="chat-message__status">En train d’écrire…</span>
+                          <span className="chat-message__status">{chat.typing}</span>
                         </>
                       ) : m.createdAt ? (
                         <>
@@ -473,23 +505,23 @@ export function ChatPage() {
                     </header>
                     <div className={`chat-message__bubble${isStreamingPlaceholder ? ' chat-message__bubble--typing' : ''}`}>
                       {isStreamingPlaceholder ? (
-                        <p className="chat-typing" aria-live="polite">
-                          <span className="chat-typing__dots" aria-hidden="true">
-                            <span /><span /><span />
-                          </span>
-                          Génération en cours…
-                        </p>
+                  <p className="chat-typing" aria-live="polite">
+                    <span className="chat-typing__dots" aria-hidden="true">
+                      <span /><span /><span />
+                    </span>
+                    {chat.generating}
+                  </p>
                       ) : (
                         m.content
                       )}
-                    </div>
-                  </div>
-                </article>
+                </div>
+              </div>
+            </article>
               )
             })}
 
             {!loading && messages.length === 0 && !sending && (
-              <p className="chat-messages__empty">Envoyez un message pour démarrer.</p>
+              <p className="chat-messages__empty">{chat.empty}</p>
             )}
           </div>
 
@@ -497,7 +529,7 @@ export function ChatPage() {
             {templates.length > 0 && (
               <div className="chat-composer__toolbar">
                 <div className="chat-composer__field chat-composer__field--template">
-                  <label className="chat-composer__label" htmlFor="chat-template">Template</label>
+                  <label className="chat-composer__label" htmlFor="chat-template">{chat.template}</label>
                   <div className="chat-composer__template-row">
                     <select
                       id="chat-template"
@@ -506,7 +538,7 @@ export function ChatPage() {
                       disabled={sending}
                       onChange={(e) => setSelectedTemplateId(e.target.value)}
                     >
-                      <option value="">Choisir un template…</option>
+                      <option value="">{chat.chooseTemplate}</option>
                       {templates.map((t) => (
                         <option key={t.id} value={t.id}>
                           {t.name}
@@ -518,9 +550,9 @@ export function ChatPage() {
                       className="btn btn--ghost btn--sm"
                       onClick={handleApplyTemplate}
                       disabled={!canApplyTemplate}
-                      title="Injecte le template dans la zone de saisie (remplace {{content}})"
+                      title={chat.applyTitle}
                     >
-                      Appliquer
+                      {chat.apply}
                     </button>
                   </div>
                 </div>
@@ -533,12 +565,12 @@ export function ChatPage() {
                 void handleSend()
               }}
             >
-              <label className="visually-hidden" htmlFor="chat-input">Message</label>
+              <label className="visually-hidden" htmlFor="chat-input">{chat.message}</label>
               <textarea
                 className="form-textarea chat-composer__input"
                 id="chat-input"
                 rows={input.length > 400 ? 6 : 2}
-                placeholder="Saisissez votre message…"
+                placeholder={chat.placeholder}
                 value={input}
                 onChange={(e) => setInput(e.target.value.slice(0, CONTENT_LIMITS.CHAT_MESSAGE_MAX))}
                 onKeyDown={handleKeyDown}
@@ -549,28 +581,30 @@ export function ChatPage() {
                 <button
                   type="button"
                   className="chat-btn chat-btn--stop"
-                  aria-label="Arrêter la génération"
+                  aria-label={common.stop}
                   onClick={handleStop}
                   disabled={!sending}
                 >
-                  Stop
+                  {common.stop}
                 </button>
                 <button
                   type="submit"
                   className="chat-btn chat-btn--primary"
-                  aria-label="Envoyer le message"
+                  aria-label={common.send}
                   disabled={!canSend}
                   title={
-                    !selectedModel || activeModels.length === 0
-                      ? 'Activez un fournisseur et un modèle'
-                      : inputOverLimit
-                        ? 'Message trop long'
-                        : !input.trim()
-                          ? 'Saisissez un message'
-                          : 'Envoyer'
+                    !selectedModel || selectableModels.length === 0
+                      ? chat.sendNeedModel
+                      : !selectedAvailable
+                        ? chat.sendUnavailable
+                        : inputOverLimit
+                          ? chat.sendTooLong
+                          : !input.trim()
+                            ? chat.sendNeedInput
+                            : chat.sendTitle
                   }
                 >
-                  Envoyer
+                  {common.send}
                 </button>
               </div>
             </form>
@@ -584,10 +618,10 @@ export function ChatPage() {
               }
             >
               {sending
-                ? 'Génération en cours…'
-                : activeModels.length === 0
-                  ? 'Aucun modèle utilisable — activez un fournisseur puis un modèle'
-                  : `${formatCharCount(input.length, CONTENT_LIMITS.CHAT_MESSAGE_MAX)} · Ctrl+Entrée pour envoyer`}
+                ? chat.generating
+                : selectableModels.length === 0
+                  ? chat.noModels
+                  : `${formatCharCount(input.length, CONTENT_LIMITS.CHAT_MESSAGE_MAX)} · ${chat.hintSend}`}
             </p>
           </footer>
         </div>

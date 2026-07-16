@@ -1,7 +1,17 @@
+import { clearAccessToken, withAuthHeaders } from '../auth/session'
 import { ApiError } from './client'
 import type { ChatChunk, ChatRequest, ChatResponse } from './types'
 
 const API_BASE = '/api'
+
+function handleUnauthorized(status: number): void {
+  if (status === 401) {
+    clearAccessToken()
+    if (window.location.pathname !== '/login') {
+      window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)
+    }
+  }
+}
 
 /** Chat synchrone (POST /api/chat) — conservé. */
 export function sendChatMessage(request: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
@@ -27,25 +37,33 @@ export async function sendChatStream(
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/chat/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    headers: withAuthHeaders({
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    }),
     body: JSON.stringify({ ...request, stream: true }),
     signal,
   })
 
   if (!response.ok) {
+    handleUnauthorized(response.status)
     let body: unknown
     try {
       body = await response.json()
     } catch {
       body = await response.text()
     }
-    const detail =
+    const apiMessage =
       typeof body === 'object' &&
       body !== null &&
       'message' in body &&
       typeof (body as { message: unknown }).message === 'string'
         ? (body as { message: string }).message
-        : `Erreur API ${response.status} sur /chat/stream`
+        : null
+    const detail =
+      response.status === 403
+        ? apiMessage || 'Accès refusé — droits insuffisants'
+        : apiMessage || `Erreur API ${response.status} sur /chat/stream`
     throw new ApiError(detail, response.status, body)
   }
 
@@ -102,7 +120,7 @@ function parseSseEvent(rawEvent: string): ChatChunk | null {
 }
 
 async function fetchJson<T>(path: string, options: RequestInit): Promise<T> {
-  const headers = new Headers(options.headers)
+  const headers = withAuthHeaders(options.headers)
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
@@ -110,19 +128,24 @@ async function fetchJson<T>(path: string, options: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers })
 
   if (!response.ok) {
+    handleUnauthorized(response.status)
     let body: unknown
     try {
       body = await response.json()
     } catch {
       body = await response.text()
     }
-    const detail =
+    const apiMessage =
       typeof body === 'object' &&
       body !== null &&
       'message' in body &&
       typeof (body as { message: unknown }).message === 'string'
         ? (body as { message: string }).message
-        : `Erreur API ${response.status} sur ${path}`
+        : null
+    const detail =
+      response.status === 403
+        ? apiMessage || 'Accès refusé — droits insuffisants'
+        : apiMessage || `Erreur API ${response.status} sur ${path}`
     throw new ApiError(detail, response.status, body)
   }
 

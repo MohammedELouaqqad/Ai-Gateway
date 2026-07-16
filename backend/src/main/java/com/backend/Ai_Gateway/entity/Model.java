@@ -42,13 +42,24 @@ public class Model {
     private List<UsageLog> usageLogs;
 
     /**
-     * Hérité du type de provider — pas de config par modèle.
+     * Adaptateur stream présent dans ce gateway (hérité du type de provider).
      * Tout nouveau modèle Ollama/OpenAI/Azure streame automatiquement.
      */
     @JsonProperty("supportsStreaming")
     @Transient
     public boolean isSupportsStreaming() {
         ProviderType type = provider != null ? provider.getType() : null;
-        return ProviderCapabilities.supportsStreaming(type);
+        return ProviderCapabilities.hasStreamAdapter(type);
+    }
+
+    /**
+     * {@code true} si ce gateway peut appeler le chat pour ce modèle
+     * (adaptateur écrit). Reste listé même si {@code false} (catalogue transparent).
+     */
+    @JsonProperty("available")
+    @Transient
+    public boolean isAvailable() {
+        ProviderType type = provider != null ? provider.getType() : null;
+        return ProviderCapabilities.hasChatAdapter(type);
     }
 }

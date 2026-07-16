@@ -2,6 +2,7 @@ package com.backend.Ai_Gateway.controller;
 
 import com.backend.Ai_Gateway.entity.PromptTemplate;
 import com.backend.Ai_Gateway.services.PromptTemplateService;
+import com.backend.Ai_Gateway.services.UserService;
 import com.backend.Ai_Gateway.services.dto.CreatePromptTemplateRequest;
 import com.backend.Ai_Gateway.services.dto.UpdatePromptTemplateRequest;
 import jakarta.validation.Valid;
@@ -16,28 +17,27 @@ import java.util.List;
 public class PromptTemplateController {
 
     private final PromptTemplateService promptTemplateService;
+    private final UserService userService;
 
-    public PromptTemplateController(PromptTemplateService promptTemplateService) {
+    public PromptTemplateController(PromptTemplateService promptTemplateService, UserService userService) {
         this.promptTemplateService = promptTemplateService;
+        this.userService = userService;
     }
 
     @GetMapping
     public List<PromptTemplate> list() {
-        Long userId = 1L;
-        return promptTemplateService.listByUser(userId);
+        return promptTemplateService.listByUser(userService.requireCurrentUserId());
     }
 
     @GetMapping("/{id}")
     public PromptTemplate get(@PathVariable Long id) {
-        Long userId = 1L;
-        return promptTemplateService.getById(userId, id);
+        return promptTemplateService.getById(userService.requireCurrentUserId(), id);
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public PromptTemplate create(@Valid @RequestBody CreatePromptTemplateRequest request) {
-        Long userId = 1L;
-        return promptTemplateService.create(userId, request);
+        return promptTemplateService.create(userService.requireCurrentUserId(), request);
     }
 
     @PutMapping("/{id}")
@@ -45,14 +45,12 @@ public class PromptTemplateController {
             @PathVariable Long id,
             @Valid @RequestBody UpdatePromptTemplateRequest request
     ) {
-        Long userId = 1L;
-        return promptTemplateService.update(userId, id, request);
+        return promptTemplateService.update(userService.requireCurrentUserId(), id, request);
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
-        Long userId = 1L;
-        promptTemplateService.delete(userId, id);
+        promptTemplateService.delete(userService.requireCurrentUserId(), id);
         return ResponseEntity.noContent().build();
     }
 }

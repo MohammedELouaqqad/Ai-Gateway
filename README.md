@@ -12,7 +12,7 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React) avec chat syn
 | Modèles / Fournisseurs | Admin + activation |
 | Usage | Tokens, coût estimé, latence |
 | Prompt templates | CRUD + insert chat (`{{content}}`) |
-| Auth | Dev : `userId = 1` (Keycloak / API Keys = plus tard) |
+| Auth | Keycloak JWT (Resource Server) — find-or-create user via `sub` |
 
 **Règle streaming :** ajouter un modèle sous Ollama/OpenAI streame automatiquement. Un **nouveau type de provider** (vLLM, SGLang…) exige un adaptateur développeur (DTO + mapper).
 
@@ -98,11 +98,47 @@ DB_USERNAME=postgres
 DB_PASSWORD=postgres
 OLLAMA_BASE_URL=http://localhost:11434
 OPENAI_API_KEY=sk-...
+KEYCLOAK_ISSUER_URI=http://localhost:8180/realms/Ai-Gateway
+APP_CORS_ALLOWED_ORIGINS=http://localhost:5173
 APP_SEED_ENABLED=true
 SPRING_PROFILES_ACTIVE=dev   # ou prod
 ```
 
 Ne jamais committer `backend/.env`.
+
+### Auth Keycloak
+
+1. Realm `Ai-Gateway`, client public `Ai-Gateway-frontend` (Direct Access Grants pour le login dev).
+2. Backend valide le JWT via `spring.security.oauth2.resourceserver.jwt.issuer-uri`.
+3. Front : `/login` → password grant (proxy Vite `/realms`) → `Authorization: Bearer` sur `/api/**`.
+4. Chaque user Keycloak est synchronisé en BDD (`users.keycloak_id` = claim `sub`).
+5. Les **rôles** viennent de Keycloak (`realm_access.roles`) et sont mappés en `ROLE_*` côté Spring.
+
+#### Rôles Keycloak (realm roles)
+
+| Rôle | Usage UI / API |
+|------|----------------|
+| `USER` | Chat, conversations, templates, usage, profil ; lecture Models/Providers |
+| `DEVELOPER` | Comme USER + items roadmap visibles dans le menu |
+| `ADMIN` | Mutations Models/Providers (`POST`/`PUT`/`PATCH`/`DELETE`) + tout le reste |
+
+Assignez au moins `USER` (ou `ADMIN`) à chaque compte. Sans `ADMIN`, les boutons d’admin sont masqués côté front et l’API répond **403**.
+
+```bash
+# Sans token → 401
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/models
+
+# Avec token
+TOKEN=$(curl -s -X POST 'http://localhost:8180/realms/Ai-Gateway/protocol/openid-connect/token' \
+  -d 'grant_type=password&client_id=Ai-Gateway-frontend&username=user1&password=...' \
+  | jq -r .access_token)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/profile
+
+# Mutation admin (ROLE_ADMIN requis) → 403 si USER
+curl -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8080/api/providers \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"X","type":"OLLAMA","enabled":false}'
+```
 
 ## Tests
 
@@ -112,8 +148,8 @@ cd backend && ./mvnw test
 
 ## Roadmap (non livré)
 
-- Auth Keycloak / JWT
 - API Keys gateway
 - Rate limiting, observabilité avancée
 - Adaptateurs stream vLLM / SGLang
 - Pricing éditable admin
+- OIDC Authorization Code + PKCE (remplacer password grant)

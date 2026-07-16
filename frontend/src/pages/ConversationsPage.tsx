@@ -4,10 +4,12 @@ import { AppLayout } from '../layouts/AppLayout'
 import { ApiStateBanner } from '../components/ApiStateBanner'
 import { fetchConversations } from '../api/conversations'
 import type { ApiConversation } from '../api/types'
-import { pages } from '../i18n/fr'
+import { useI18n } from '../i18n'
 import { formatDateTime, providerToUiType } from '../utils/mappers'
 
 export function ConversationsPage() {
+  const { pages, common } = useI18n()
+  const conv = pages.conversations
   const [conversations, setConversations] = useState<ApiConversation[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -21,7 +23,7 @@ export function ConversationsPage() {
       })
       .catch((e) => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Erreur chargement')
+          setError(e instanceof Error ? e.message : common.loadError)
         }
       })
       .finally(() => {
@@ -30,27 +32,29 @@ export function ConversationsPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [common.loadError])
 
   return (
-    <AppLayout breadcrumbs={[{ label: 'AI Gateway' }, { label: pages.conversations.title }]}>
+    <AppLayout breadcrumbs={[{ label: 'AI Gateway' }, { label: conv.title }]}>
       <ApiStateBanner loading={loading} error={error} />
 
       <header className="page-header page-header--row">
         <div>
-          <h1>{pages.conversations.title}</h1>
-          <p>{pages.conversations.subtitle}</p>
+          <h1>{conv.title}</h1>
+          <p>{conv.subtitle}</p>
         </div>
         <div className="page-header__actions">
-          <Link to="/" className="btn btn--primary btn--sm">Ouvrir le chat</Link>
+          <Link to="/" className="btn btn--primary btn--sm">{pages.dashboard.openChat}</Link>
         </div>
       </header>
 
       <section className="section">
         <div className="section__header">
           <div>
-            <h2 className="section__title">Récentes</h2>
-            <p className="section__subtitle">{conversations.length} conversation(s)</p>
+            <h2 className="section__title">{conv.recent}</h2>
+            <p className="section__subtitle">
+              {conv.count.replace('{n}', String(conversations.length))}
+            </p>
           </div>
         </div>
 
@@ -59,12 +63,12 @@ export function ConversationsPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th scope="col">Titre</th>
-                  <th scope="col">Date</th>
-                  <th scope="col">Provider</th>
-                  <th scope="col">Type</th>
-                  <th scope="col">Modèle</th>
-                  <th scope="col">ID</th>
+                  <th scope="col">{conv.titleCol}</th>
+                  <th scope="col">{common.date}</th>
+                  <th scope="col">{common.provider}</th>
+                  <th scope="col">{common.type}</th>
+                  <th scope="col">{common.model}</th>
+                  <th scope="col">{conv.id}</th>
                 </tr>
               </thead>
               <tbody>
@@ -96,8 +100,8 @@ export function ConversationsPage() {
                 {!loading && conversations.length === 0 && (
                   <tr>
                     <td colSpan={6} className="table-empty">
-                      Aucune conversation —{' '}
-                      <Link to="/" className="table-link">démarrer dans le chat</Link>
+                      {conv.empty}
+                      <Link to="/" className="table-link">{conv.startInChat}</Link>
                     </td>
                   </tr>
                 )}

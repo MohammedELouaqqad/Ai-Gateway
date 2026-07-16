@@ -3,6 +3,7 @@ package com.backend.Ai_Gateway.controller;
 
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.services.ChatService;
+import com.backend.Ai_Gateway.services.UserService;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -18,15 +19,17 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class ChatController {
 
     private final ChatService chatService;
+    private final UserService userService;
 
-    public ChatController(ChatService chatService) {
+    public ChatController(ChatService chatService, UserService userService) {
         this.chatService = chatService;
+        this.userService = userService;
     }
 
     /** Chat non-streaming (existant). */
     @PostMapping
     public ChatResponse createChat(@Valid @RequestBody UserChatRequest userChatRequest) {
-        Long userId = 1L;  // Via JWT/Keycloak
+        Long userId = userService.requireCurrentUserId();
         return chatService.handleChat(userId, userChatRequest);
     }
 
@@ -44,7 +47,7 @@ public class ChatController {
         response.setHeader("X-Accel-Buffering", "no");
         response.setHeader("Connection", "keep-alive");
 
-        Long userId = 1L;  // Via JWT/Keycloak
+        Long userId = userService.requireCurrentUserId();
         return chatService.handleChatStream(userId, userChatRequest);
     }
 }

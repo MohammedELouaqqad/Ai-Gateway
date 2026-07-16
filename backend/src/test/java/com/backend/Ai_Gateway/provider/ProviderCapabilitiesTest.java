@@ -9,15 +9,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ProviderCapabilitiesTest {
 
     @Test
-    void ollamaOpenAiAzure_supportStreaming() {
-        assertTrue(ProviderCapabilities.supportsStreaming(ProviderType.OLLAMA));
-        assertTrue(ProviderCapabilities.supportsStreaming(ProviderType.OPENAI));
-        assertTrue(ProviderCapabilities.supportsStreaming(ProviderType.AZURE_OPENAI));
+    void ollamaOpenAiAzure_haveAdapters() {
+        assertTrue(ProviderCapabilities.hasChatAdapter(ProviderType.OLLAMA));
+        assertTrue(ProviderCapabilities.hasStreamAdapter(ProviderType.OLLAMA));
+        assertTrue(ProviderCapabilities.hasChatAdapter(ProviderType.OPENAI));
+        assertTrue(ProviderCapabilities.hasStreamAdapter(ProviderType.OPENAI));
+        assertTrue(ProviderCapabilities.hasChatAdapter(ProviderType.AZURE_OPENAI));
+        assertTrue(ProviderCapabilities.hasStreamAdapter(ProviderType.AZURE_OPENAI));
     }
 
     @Test
-    void sglangVllm_doNotSupportStreamingYet() {
-        assertFalse(ProviderCapabilities.supportsStreaming(ProviderType.SGLANG));
-        assertFalse(ProviderCapabilities.supportsStreaming(ProviderType.VLLM));
+    void sglangVllm_haveNoAdaptersInThisProject() {
+        assertFalse(ProviderCapabilities.hasChatAdapter(ProviderType.SGLANG));
+        assertFalse(ProviderCapabilities.hasStreamAdapter(ProviderType.SGLANG));
+        assertFalse(ProviderCapabilities.hasChatAdapter(ProviderType.VLLM));
+        assertFalse(ProviderCapabilities.hasStreamAdapter(ProviderType.VLLM));
     }
 }

@@ -91,4 +91,22 @@ class ChunkMapperTest {
         assertEquals(3, chunk.usage().completionTokens());
         assertEquals(13, chunk.usage().totalTokens());
     }
+
+    @Test
+    void openAiLastTokenWithFinishReason_emitsDeltaFirst() {
+        OpenAiStreamChunkDto dto = new OpenAiStreamChunkDto(
+                "chatcmpl-1",
+                List.of(new OpenAiStreamChunkDto.OpenAiStreamChoice(
+                        0,
+                        new OpenAiStreamChunkDto.OpenAiStreamDelta(null, "!"),
+                        "stop"
+                )),
+                null
+        );
+
+        ChatChunk chunk = OpenAiChunkMapper.toChatChunk(dto);
+
+        assertFalse(chunk.done());
+        assertEquals("!", chunk.content());
+    }
 }

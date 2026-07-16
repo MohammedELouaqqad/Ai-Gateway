@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { MoreVertical, Pencil, Power, Star, Trash2 } from 'lucide-react'
 import type { ApiModel } from '../api/types'
+import { useI18n } from '../i18n'
 
 const ICON_SIZE = 16
 
@@ -8,6 +9,8 @@ interface ModelRowActionsProps {
   model: ApiModel
   isDefault: boolean
   providerEnabled?: boolean
+  /** Si false, aucune action admin n'est affichée (lecture seule). */
+  canMutate?: boolean
   onRename: () => void
   onSetDefault: () => void
   onToggle: () => void
@@ -18,11 +21,14 @@ export function ModelRowActions({
   model,
   isDefault,
   providerEnabled = true,
+  canMutate = true,
   onRename,
   onSetDefault,
   onToggle,
   onDelete,
 }: ModelRowActionsProps) {
+  const { common, pages } = useI18n()
+  const m = pages.models
   const [menuOpen, setMenuOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const label = model.displayName ?? model.name
@@ -30,22 +36,22 @@ export function ModelRowActions({
   const toggleDisabled = !model.enabled && !canEnable
 
   const defaultTitle = isDefault
-    ? 'Ce modèle est déjà le défaut'
+    ? m.alreadyDefault
     : !model.enabled
-      ? 'Activez le modèle avant de le définir par défaut'
+      ? m.enableBeforeDefault
       : !providerEnabled
-        ? 'Le fournisseur est inactif'
-        : 'Définir par défaut'
+        ? m.providerInactive
+        : common.setDefault
 
   const toggleTitle = model.enabled
-    ? 'Désactiver'
+    ? common.disable
     : !canEnable
-      ? 'Activez d’abord le fournisseur'
-      : 'Activer'
+      ? m.enableProviderFirst
+      : common.enable
 
   const deleteTitle = isDefault
-    ? 'Retirez le statut défaut avant de supprimer'
-    : 'Supprimer ce modèle'
+    ? m.removeDefaultBeforeDelete
+    : m.deleteModel
 
   useEffect(() => {
     if (!menuOpen) return
@@ -63,18 +69,22 @@ export function ModelRowActions({
     action()
   }
 
+  if (!canMutate) {
+    return <span className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>—</span>
+  }
+
   return (
     <div className="row-actions-wrap" ref={rootRef}>
       <div
         className="row-actions row-actions--toolbar"
         role="toolbar"
-        aria-label={`Actions pour ${label}`}
+        aria-label={m.actionsFor.replace('{name}', label)}
       >
         <button
           type="button"
           className="icon-btn icon-btn--muted"
-          title="Renommer"
-          aria-label={`Renommer ${label}`}
+          title={common.rename}
+          aria-label={`${common.rename} ${label}`}
           onClick={() => onRename()}
         >
           <Pencil size={ICON_SIZE} aria-hidden="true" />
@@ -88,7 +98,7 @@ export function ModelRowActions({
             className={`icon-btn icon-btn--star${isDefault ? ' icon-btn--star-active' : ''}`}
             disabled={isDefault || !model.enabled || !providerEnabled}
             title={defaultTitle}
-            aria-label="Définir par défaut"
+            aria-label={common.setDefault}
             onClick={() => onSetDefault()}
           >
             <Star
@@ -97,7 +107,7 @@ export function ModelRowActions({
               fill={isDefault ? 'currentColor' : 'none'}
             />
           </button>
-          {isDefault && <span className="row-actions__default-label">Défaut</span>}
+          {isDefault && <span className="row-actions__default-label">{common.default}</span>}
         </div>
 
         <button
@@ -118,7 +128,7 @@ export function ModelRowActions({
           className="icon-btn icon-btn--danger"
           disabled={isDefault}
           title={deleteTitle}
-          aria-label="Supprimer"
+          aria-label={common.delete}
           onClick={() => onDelete()}
         >
           <Trash2 size={ICON_SIZE} aria-hidden="true" />
@@ -129,8 +139,8 @@ export function ModelRowActions({
         <button
           type="button"
           className="icon-btn icon-btn--muted"
-          title="Actions"
-          aria-label={`Menu actions pour ${label}`}
+          title={common.actions}
+          aria-label={m.menuFor.replace('{name}', label)}
           aria-expanded={menuOpen}
           aria-haspopup="menu"
           onClick={() => setMenuOpen((prev) => !prev)}
@@ -147,7 +157,7 @@ export function ModelRowActions({
               onClick={() => runAction(onRename)}
             >
               <Pencil size={ICON_SIZE} aria-hidden="true" />
-              Renommer
+              {common.rename}
             </button>
             <button
               type="button"
@@ -157,7 +167,7 @@ export function ModelRowActions({
               onClick={() => runAction(onSetDefault)}
             >
               <Star size={ICON_SIZE} aria-hidden="true" />
-              Définir par défaut
+              {common.setDefault}
             </button>
             <button
               type="button"
@@ -168,7 +178,7 @@ export function ModelRowActions({
               onClick={() => runAction(onToggle)}
             >
               <Power size={ICON_SIZE} aria-hidden="true" />
-              {model.enabled ? 'Désactiver' : 'Activer'}
+              {model.enabled ? common.disable : common.enable}
             </button>
             <button
               type="button"
@@ -178,7 +188,7 @@ export function ModelRowActions({
               onClick={() => runAction(onDelete)}
             >
               <Trash2 size={ICON_SIZE} aria-hidden="true" />
-              Supprimer
+              {common.delete}
             </button>
           </div>
         )}

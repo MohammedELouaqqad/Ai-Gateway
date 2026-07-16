@@ -1,8 +1,9 @@
 import { AppLayout } from '../layouts/AppLayout'
 import { EmptyState } from '../components/EmptyState'
-import { pages } from '../i18n/fr'
+import { useI18n } from '../i18n'
 
 export function ObservabilityPage() {
+  const { pages } = useI18n()
   return (
     <AppLayout breadcrumbs={[{ label: 'AI Gateway' }, { label: pages.observability.title }]}>
       <header className="page-header">
@@ -14,9 +15,9 @@ export function ObservabilityPage() {
         <div className="card__body">
           <EmptyState
             status="roadmap"
-            title="Observabilité"
-            message="Métriques et alertes non branchées. Les tokens, coûts et latences sont déjà visibles dans Consommation."
-            action={{ to: '/usage', label: 'Ouvrir Consommation' }}
+            title={pages.observability.title}
+            message={pages.observability.subtitle}
+            action={{ to: '/usage', label: pages.usage.title }}
           />
         </div>
       </section>

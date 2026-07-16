@@ -24,14 +24,16 @@ public class Conversation {
     private Instant createdAt;
     private Instant updatedAt;
 
-    @ManyToOne
+    /** Owner — ignoré en JSON API pour éviter fuites / LazyInit ; chargé EAGER pour les checks ownership. */
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.EAGER)
     private User user;
 
     @JsonIgnore
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "conversation")
     private List<Message> messages;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.EAGER)
     private Model model;
 
 

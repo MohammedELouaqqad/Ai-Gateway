@@ -23,6 +23,7 @@ public class User {
     private Long id;
 
 
+    @Column(unique = true)
     private String keycloakId;
     private String username;
     private String email;

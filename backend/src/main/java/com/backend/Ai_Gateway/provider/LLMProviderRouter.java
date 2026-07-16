@@ -1,6 +1,7 @@
 package com.backend.Ai_Gateway.provider;
 
 import com.backend.Ai_Gateway.entity.Provider;
+import com.backend.Ai_Gateway.exceptions.ProviderNotImplementedException;
 import com.backend.Ai_Gateway.provider.dto.ChatChunk;
 import com.backend.Ai_Gateway.provider.dto.ChatMessage;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
@@ -26,7 +27,6 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -62,10 +62,13 @@ public class LLMProviderRouter {
         if (provider == null) {
             throw new IllegalArgumentException("Provider is required");
         }
+        if (!ProviderCapabilities.hasChatAdapter(provider.getType())) {
+            throw new ProviderNotImplementedException(provider.getType());
+        }
         return switch (provider.getType()) {
             case OLLAMA -> chatOllama(provider, request);
             case OPENAI, AZURE_OPENAI -> chatOpenAi(provider, request);
-            default -> throw new IllegalArgumentException("Provider type not supported for chat: " + provider.getType());
+            default -> throw new ProviderNotImplementedException(provider.getType());
         };
     }
 
@@ -74,19 +77,14 @@ public class LLMProviderRouter {
         if (provider == null) {
             return Flux.error(new IllegalArgumentException("Provider is required"));
         }
-        if (!ProviderCapabilities.supportsStreaming(provider.getType())) {
-            return Flux.error(new IllegalArgumentException(
-                    "Streaming not supported for provider type: " + provider.getType()
-                    + ". Add a provider adapter (DTO + mapper) — models inherit streaming automatically."
-            ));
+        if (!ProviderCapabilities.hasStreamAdapter(provider.getType())) {
+            return Flux.error(new ProviderNotImplementedException(provider.getType()));
         }
         return switch (provider.getType()) {
             case OLLAMA -> streamOllama(provider, request);
             // Azure OpenAI uses the same chat-completions SSE protocol as OpenAI
             case OPENAI, AZURE_OPENAI -> streamOpenAi(provider, request);
-            default -> Flux.error(new IllegalArgumentException(
-                    "Provider type not supported for stream: " + provider.getType()
-            ));
+            default -> Flux.error(new ProviderNotImplementedException(provider.getType()));
         };
     }
 
@@ -178,6 +176,8 @@ public class LLMProviderRouter {
         // IMPORTANT: do NOT Accept text/event-stream here — Spring's SSE codec would strip
         // "data:" prefixes and our line parser would filter everything out (empty stream).
         // Parse the raw SSE body manually so every OpenAI/Azure model inherits streaming.
+        // Buffer lines across DataBuffers: OpenAI events are often larger than one TCP chunk.
+        StreamLineBuffer lineBuffer = new StreamLineBuffer();
         return client.post()
                 .uri("/chat/completions")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -186,7 +186,8 @@ public class LLMProviderRouter {
                 .retrieve()
                 .bodyToFlux(DataBuffer.class)
                 .map(this::dataBufferToString)
-                .concatMapIterable(this::splitLines)
+                .concatMapIterable(lineBuffer::appendAndDrain)
+                .concatWith(Flux.defer(() -> Flux.fromIterable(lineBuffer.flush())))
                 .map(String::trim)
                 .filter(line -> !line.isEmpty())
                 .filter(line -> line.startsWith("data:"))
@@ -209,11 +210,12 @@ public class LLMProviderRouter {
         }
     }
 
-    private List<String> splitLines(String chunk) {
-        if (chunk == null || chunk.isEmpty()) {
-            return List.of();
+    private OpenAiStreamChunkDto parseOpenAiData(String data) {
+        try {
+            return objectMapper.readValue(data, OpenAiStreamChunkDto.class);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Invalid OpenAI stream chunk: " + data, ex);
         }
-        return Arrays.asList(chunk.split("\\r?\\n", -1));
     }
 
     private OllamaStreamChunkDto parseOllamaLine(String line) {
@@ -221,14 +223,6 @@ public class LLMProviderRouter {
             return objectMapper.readValue(line, OllamaStreamChunkDto.class);
         } catch (Exception ex) {
             throw new IllegalStateException("Invalid Ollama stream chunk: " + line, ex);
-        }
-    }
-
-    private OpenAiStreamChunkDto parseOpenAiData(String data) {
-        try {
-            return objectMapper.readValue(data, OpenAiStreamChunkDto.class);
-        } catch (Exception ex) {
-            throw new IllegalStateException("Invalid OpenAI stream chunk: " + data, ex);
         }
     }
 

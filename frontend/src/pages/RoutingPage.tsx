@@ -1,8 +1,9 @@
 import { AppLayout } from '../layouts/AppLayout'
 import { EmptyState } from '../components/EmptyState'
-import { pages } from '../i18n/fr'
+import { useI18n } from '../i18n'
 
 export function RoutingPage() {
+  const { pages } = useI18n()
   return (
     <AppLayout breadcrumbs={[{ label: 'AI Gateway' }, { label: pages.routing.title }]}>
       <header className="page-header">
@@ -12,12 +13,7 @@ export function RoutingPage() {
 
       <section className="section card">
         <div className="card__body">
-          <EmptyState
-            status="roadmap"
-            title="Routage avancé"
-            message="Non disponible pour l'instant. Le chat utilise le modèle sélectionné et son provider associé."
-            action={{ to: '/models', label: 'Voir les modèles' }}
-          />
+          <EmptyState status="roadmap" title={pages.routing.title} message={pages.routing.subtitle} />
         </div>
       </section>
     </AppLayout>

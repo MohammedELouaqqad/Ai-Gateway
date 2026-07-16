@@ -41,6 +41,9 @@ services:
       DB_PASSWORD: postgres
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       APP_SEED_ENABLED: "true"
+      # iss du JWT reste localhost:8180 ; JWKS joignable depuis le conteneur via host-gateway
+      KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/Ai-Gateway
+      KEYCLOAK_JWK_SET_URI: http://host.docker.internal:8180/realms/Ai-Gateway/protocol/openid-connect/certs
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -54,6 +57,12 @@ services:
       - "5173:5173"
     environment:
       API_PROXY_TARGET: http://backend:8080
+      # Keycloak tourne sur l'hôte (pas dans ce compose) — pas localhost du conteneur
+      KEYCLOAK_PROXY_TARGET: http://host.docker.internal:8180
+      # Host vu par Keycloak → claim iss du JWT (doit matcher KEYCLOAK_ISSUER_URI)
+      KEYCLOAK_PUBLIC_HOST: localhost:8180
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - backend
 

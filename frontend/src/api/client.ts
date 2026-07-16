@@ -1,3 +1,5 @@
+import { withAuthHeaders, clearAccessToken } from '../auth/session'
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -23,11 +25,20 @@ async function readResponseBody(response: Response): Promise<unknown> {
   }
 }
 
+function handleUnauthorized(status: number): void {
+  if (status === 401) {
+    clearAccessToken()
+    if (window.location.pathname !== '/login') {
+      window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)
+    }
+  }
+}
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const headers = new Headers(options.headers)
+  const headers = withAuthHeaders(options.headers)
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
@@ -38,14 +49,19 @@ export async function apiFetch<T>(
   })
 
   if (!response.ok) {
+    handleUnauthorized(response.status)
     const body = await readResponseBody(response)
-    const detail =
+    const apiMessage =
       typeof body === 'object' &&
       body !== null &&
       'message' in body &&
       typeof (body as { message: unknown }).message === 'string'
         ? (body as { message: string }).message
-        : `Erreur API ${response.status} sur ${path}`
+        : null
+    const detail =
+      response.status === 403
+        ? apiMessage || 'Accès refusé — droits insuffisants'
+        : apiMessage || `Erreur API ${response.status} sur ${path}`
     throw new ApiError(detail, response.status, body)
   }
 

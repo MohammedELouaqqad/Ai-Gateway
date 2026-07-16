@@ -3,15 +3,16 @@ package com.backend.Ai_Gateway.provider;
 import com.backend.Ai_Gateway.enums.ProviderType;
 
 /**
- * Capacités héritées par tous les modèles d'un provider type.
- * Ajouter un modèle n'exige pas de nouveau DTO/mapper — seul un nouveau
- * {@link ProviderType} nécessite du code développeur.
+ * Indique si CE PROJET a écrit l'adaptateur, PAS si le provider distant
+ * en est techniquement capable. SGLang / vLLM streament en réalité via
+ * l'API OpenAI-compatible — {@code false} signifie seulement « pas encore câblé ici ».
  */
 public final class ProviderCapabilities {
 
     private ProviderCapabilities() {}
 
-    public static boolean supportsChat(ProviderType type) {
+    /** Adaptateur non-streaming ({@link LLMProviderRouter#chat}) présent. */
+    public static boolean hasChatAdapter(ProviderType type) {
         if (type == null) {
             return false;
         }
@@ -21,8 +22,8 @@ public final class ProviderCapabilities {
         };
     }
 
-    /** Stream disponible dès qu'un adaptateur provider existe (héritage modèles). */
-    public static boolean supportsStreaming(ProviderType type) {
+    /** Adaptateur streaming ({@link LLMProviderRouter#stream}) présent. */
+    public static boolean hasStreamAdapter(ProviderType type) {
         if (type == null) {
             return false;
         }

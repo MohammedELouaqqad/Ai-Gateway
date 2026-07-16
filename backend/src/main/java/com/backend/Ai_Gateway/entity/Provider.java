@@ -13,7 +13,7 @@ import java.util.List;
 @Entity
 @Getter
 @Setter
-@ToString
+@ToString(exclude = {"models", "usageLogs", "apiKey"})
 @AllArgsConstructor
 @NoArgsConstructor
 public class Provider {

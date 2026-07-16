@@ -7,10 +7,12 @@ import com.backend.Ai_Gateway.entity.Provider;
 import com.backend.Ai_Gateway.repositories.ModelRepository;
 import com.backend.Ai_Gateway.repositories.ProviderRepository;
 import com.backend.Ai_Gateway.repositories.UsageLogRepository;
+import com.backend.Ai_Gateway.services.dto.CreateProviderRequest;
 import com.backend.Ai_Gateway.services.dto.UpdateProviderRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 
 @Service
@@ -39,12 +41,24 @@ public class ProviderService {
                 .orElseThrow(() -> new RessourceNotFoundException("provider not found with id " + id));
     }
 
-    public Provider createProvider(Provider newProvider) {
-        boolean providerExists = providerRepository.existsByName(newProvider.getName());
-        if (providerExists) {
+    @Transactional
+    public Provider createProvider(CreateProviderRequest request) {
+        String name = request.name().trim();
+        if (providerRepository.existsByName(name)) {
             throw new RessourceAlreadyExistsException("Provider already exist");
         }
-        return providerRepository.save(newProvider);
+
+        Provider provider = new Provider();
+        provider.setName(name);
+        provider.setType(request.type());
+        if (request.baseUrl() != null && !request.baseUrl().isBlank()) {
+            provider.setBaseUrl(request.baseUrl().trim());
+        }
+        provider.setLocation(request.location());
+        provider.setPriority(request.priority());
+        provider.setEnabled(request.enabled());
+        provider.setCreatedAt(Instant.now());
+        return providerRepository.save(provider);
     }
 
     @Transactional

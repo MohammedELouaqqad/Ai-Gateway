@@ -1,8 +1,9 @@
 import { AppLayout } from '../layouts/AppLayout'
 import { EmptyState } from '../components/EmptyState'
-import { pages } from '../i18n/fr'
+import { useI18n } from '../i18n'
 
 export function RateLimitingPage() {
+  const { pages } = useI18n()
   return (
     <AppLayout breadcrumbs={[{ label: 'AI Gateway' }, { label: pages.rateLimit.title }]}>
       <header className="page-header">
@@ -12,12 +13,7 @@ export function RateLimitingPage() {
 
       <section className="section card">
         <div className="card__body">
-          <EmptyState
-            status="roadmap"
-            title="Rate limiting"
-            message="Non disponible pour l'instant. Nécessite Redis et un service de quotas côté backend."
-            action={{ to: '/settings', label: 'Voir les paramètres' }}
-          />
+          <EmptyState status="roadmap" title={pages.rateLimit.title} message={pages.rateLimit.subtitle} />
         </div>
       </section>
     </AppLayout>

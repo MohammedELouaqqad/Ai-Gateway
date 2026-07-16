@@ -27,8 +27,10 @@ export interface ApiModel {
   enabled: boolean
   default: boolean
   isDefault?: boolean
-  /** Hérité du provider type (Ollama/OpenAI/Azure = true). */
+  /** Adaptateur stream présent dans ce gateway (Ollama/OpenAI/Azure = true). */
   supportsStreaming?: boolean
+  /** Adaptateur chat présent — sinon le modèle reste listé mais inutilisable. */
+  available?: boolean
   createdAt?: string
   provider?: ApiProvider
 }

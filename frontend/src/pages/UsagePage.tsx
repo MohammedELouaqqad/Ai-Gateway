@@ -4,7 +4,7 @@ import { ApiStateBanner } from '../components/ApiStateBanner'
 import { Badge } from '../components/Badge'
 import { fetchUsageLogs, fetchUsageSummary } from '../api/usage'
 import type { ApiUsageLog, UsageSummary } from '../api/types'
-import { fmt, pages } from '../i18n/fr'
+import { useI18n } from '../i18n'
 import { providerToUiType } from '../utils/mappers'
 
 function formatTokens(n: number): string {
@@ -25,6 +25,9 @@ function dayKey(iso?: string): string | null {
 }
 
 export function UsagePage() {
+  const { pages, fmt, labels, common, locale } = useI18n()
+  const usage = pages.usage
+  const localeTag = locale === 'en' ? 'en-US' : 'fr-FR'
   const [summary, setSummary] = useState<UsageSummary | null>(null)
   const [logs, setLogs] = useState<ApiUsageLog[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,7 +50,7 @@ export function UsagePage() {
       })
       .catch((e) => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Erreur chargement')
+          setError(e instanceof Error ? e.message : common.loadError)
         }
       })
       .finally(() => {
@@ -56,7 +59,7 @@ export function UsagePage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [common.loadError])
 
   const modelOptions = useMemo(() => {
     const names = new Set<string>()
@@ -64,8 +67,8 @@ export function UsagePage() {
       const label = log.model?.displayName ?? log.model?.name
       if (label) names.add(label)
     }
-    return [...names].sort((a, b) => a.localeCompare(b, 'fr'))
-  }, [logs])
+    return [...names].sort((a, b) => a.localeCompare(b, localeTag))
+  }, [logs, localeTag])
 
   const providerOptions = useMemo(() => {
     const names = new Set<string>()
@@ -73,8 +76,8 @@ export function UsagePage() {
       const label = log.model?.provider?.name
       if (label) names.add(label)
     }
-    return [...names].sort((a, b) => a.localeCompare(b, 'fr'))
-  }, [logs])
+    return [...names].sort((a, b) => a.localeCompare(b, localeTag))
+  }, [logs, localeTag])
 
   const filteredLogs = useMemo(() => {
     return logs
@@ -151,10 +154,10 @@ export function UsagePage() {
         <p>{pages.usage.subtitle}</p>
       </header>
 
-      <section className="kpi-grid" aria-label="Métriques usage">
+      <section className="kpi-grid" aria-label={pages.usage.title}>
         <article className="kpi-card">
           <div className="kpi-card__header">
-            <span className="kpi-card__label">TOKENS</span>
+            <span className="kpi-card__label">{labels.tokens}</span>
           </div>
           <div className="kpi-card__value">
             {summary ? formatTokens(summary.totalTokens) : '—'}
@@ -162,7 +165,7 @@ export function UsagePage() {
         </article>
         <article className="kpi-card">
           <div className="kpi-card__header">
-            <span className="kpi-card__label">COÛT ESTIMÉ</span>
+            <span className="kpi-card__label">{labels.estimatedCost}</span>
           </div>
           <div className="kpi-card__value">
             {summary ? fmt.currency(summary.totalCost) : '—'}
@@ -170,7 +173,7 @@ export function UsagePage() {
         </article>
         <article className="kpi-card">
           <div className="kpi-card__header">
-            <span className="kpi-card__label">REQUÊTES</span>
+            <span className="kpi-card__label">{labels.requests}</span>
           </div>
           <div className="kpi-card__value">
             {summary ? fmt.num(summary.requestCount) : '—'}
@@ -178,46 +181,46 @@ export function UsagePage() {
         </article>
         <article className="kpi-card">
           <div className="kpi-card__header">
-            <span className="kpi-card__label">LATENCE MOY.</span>
+            <span className="kpi-card__label">{labels.avgLatency}</span>
           </div>
           <div className="kpi-card__value">
             {avgLatencyMs != null ? `${fmt.num(avgLatencyMs)} ms` : '—'}
           </div>
           {hasActiveFilters && (
-            <p className="kpi-card__hint">Sur le filtre actif</p>
+            <p className="kpi-card__hint">{usage.filterHint}</p>
           )}
         </article>
       </section>
 
-      <section className="usage-filters" aria-label="Filtres usage">
+      <section className="usage-filters" aria-label={pages.usage.title}>
         <label className="usage-filters__field">
-          <span className="usage-filters__label">Modèle</span>
+          <span className="usage-filters__label">{common.model}</span>
           <select
             className="form-select"
             value={filterModel}
             onChange={(e) => setFilterModel(e.target.value)}
           >
-            <option value="">Tous</option>
+            <option value="">{common.all}</option>
             {modelOptions.map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
         </label>
         <label className="usage-filters__field">
-          <span className="usage-filters__label">Fournisseur</span>
+          <span className="usage-filters__label">{common.provider}</span>
           <select
             className="form-select"
             value={filterProvider}
             onChange={(e) => setFilterProvider(e.target.value)}
           >
-            <option value="">Tous</option>
+            <option value="">{common.all}</option>
             {providerOptions.map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
         </label>
         <label className="usage-filters__field">
-          <span className="usage-filters__label">Du</span>
+          <span className="usage-filters__label">{usage.from}</span>
           <input
             type="date"
             className="form-input"
@@ -226,7 +229,7 @@ export function UsagePage() {
           />
         </label>
         <label className="usage-filters__field">
-          <span className="usage-filters__label">Au</span>
+          <span className="usage-filters__label">{usage.to}</span>
           <input
             type="date"
             className="form-input"
@@ -236,7 +239,7 @@ export function UsagePage() {
         </label>
         {hasActiveFilters && (
           <button type="button" className="btn btn--ghost usage-filters__clear" onClick={clearFilters}>
-            Réinitialiser
+            {usage.reset}
           </button>
         )}
       </section>
@@ -244,20 +247,22 @@ export function UsagePage() {
       <div className="grid-2">
         <section className="section card">
           <div className="card__header">
-            <h2 className="card__title">Journal d&apos;usage</h2>
-            <span className="card__meta">{filteredLogs.length} entrée{filteredLogs.length !== 1 ? 's' : ''}</span>
+            <h2 className="card__title">{usage.journal}</h2>
+            <span className="card__meta">
+              {usage.entries.replace('{n}', String(filteredLogs.length))}
+            </span>
           </div>
           <div className="card__body" style={{ padding: 0 }}>
             <div className="table-wrapper">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th scope="col">Modèle</th>
-                    <th scope="col">Tokens</th>
-                    <th scope="col">Coût</th>
-                    <th scope="col">Latence</th>
-                    <th scope="col">Statut</th>
-                    <th scope="col">Date</th>
+                    <th scope="col">{common.model}</th>
+                    <th scope="col">{common.tokens}</th>
+                    <th scope="col">{common.cost}</th>
+                    <th scope="col">{common.latency}</th>
+                    <th scope="col">{common.status}</th>
+                    <th scope="col">{common.date}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -280,7 +285,7 @@ export function UsagePage() {
                         </td>
                         <td className="mono" style={{ fontSize: '0.8rem' }}>
                           {log.createdAt
-                            ? new Date(log.createdAt).toLocaleString('fr-FR')
+                            ? new Date(log.createdAt).toLocaleString(locale === 'en' ? 'en-US' : 'fr-FR')
                             : '—'}
                         </td>
                       </tr>
@@ -289,7 +294,7 @@ export function UsagePage() {
                   {!loading && filteredLogs.length === 0 && (
                     <tr>
                       <td colSpan={6} className="table-empty">
-                        {logs.length === 0 ? 'Aucun log d\'usage' : 'Aucun résultat pour ces filtres'}
+                        {logs.length === 0 ? usage.noLogs : usage.noFilterResults}
                       </td>
                     </tr>
                   )}
@@ -301,20 +306,20 @@ export function UsagePage() {
 
         <section className="section card">
           <div className="card__header">
-            <h2 className="card__title">Par modèle</h2>
+            <h2 className="card__title">{usage.byModel}</h2>
           </div>
           <div className="card__body" style={{ padding: 0 }}>
             <div className="table-wrapper">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th scope="col">Modèle</th>
-                    <th scope="col">Fournisseur</th>
-                    <th scope="col">Type</th>
-                    <th scope="col">Req</th>
-                    <th scope="col">Tokens</th>
-                    <th scope="col">Coût</th>
-                    <th scope="col">Part</th>
+                    <th scope="col">{common.model}</th>
+                    <th scope="col">{common.provider}</th>
+                    <th scope="col">{common.type}</th>
+                    <th scope="col">{usage.req}</th>
+                    <th scope="col">{common.tokens}</th>
+                    <th scope="col">{common.cost}</th>
+                    <th scope="col">{usage.share}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -335,7 +340,7 @@ export function UsagePage() {
                   ))}
                   {!loading && usageByModel.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="table-empty">Aucune donnée agrégée</td>
+                      <td colSpan={7} className="table-empty">{usage.noAggregate}</td>
                     </tr>
                   )}
                 </tbody>

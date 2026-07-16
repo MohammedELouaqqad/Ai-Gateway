@@ -6,10 +6,11 @@ import { ApiStateBanner } from '../components/ApiStateBanner'
 import { fetchProviders } from '../api/providers'
 import { fetchUsageSummary } from '../api/usage'
 import type { ApiProvider, UsageSummary } from '../api/types'
-import { fmt, pages } from '../i18n/fr'
+import { useI18n } from '../i18n'
 import { providerToUiType } from '../utils/mappers'
 
 export function DashboardPage() {
+  const { pages, fmt, labels, common } = useI18n()
   const [providers, setProviders] = useState<ApiProvider[]>([])
   const [usage, setUsage] = useState<UsageSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -27,7 +28,7 @@ export function DashboardPage() {
       })
       .catch((e) => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Erreur chargement')
+          setError(e instanceof Error ? e.message : common.loadError)
         }
       })
       .finally(() => {
@@ -36,7 +37,7 @@ export function DashboardPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [common.loadError])
 
   const activeCount = providers.filter((p) => p.enabled).length
   const localCount = providers.filter((p) => providerToUiType(p) === 'onprem').length
@@ -51,49 +52,56 @@ export function DashboardPage() {
           <p>{pages.dashboard.subtitle}</p>
         </div>
         <div className="page-header__actions">
-          <Link to="/usage" className="btn btn--ghost btn--sm">Consommation</Link>
-          <Link to="/" className="btn btn--primary btn--sm">Ouvrir le chat</Link>
+          <Link to="/" className="btn btn--primary btn--sm">{pages.dashboard.openChat}</Link>
         </div>
       </header>
 
-      <section className="kpi-grid" aria-label="Indicateurs clés">
-        <article className="kpi-card">
-          <div className="kpi-card__header">
-            <span className="kpi-card__label">PROVIDERS</span>
-          </div>
-          <div className="kpi-card__value">{providers.length}</div>
-          <span className="kpi-card__trend kpi-card__trend--neutral">
-            {activeCount} actif{activeCount !== 1 ? 's' : ''} · {localCount} local
-          </span>
-        </article>
-        <article className="kpi-card">
-          <div className="kpi-card__header">
-            <span className="kpi-card__label">TOKENS</span>
-          </div>
-          <div className="kpi-card__value">{usage ? fmt.num(usage.totalTokens) : '—'}</div>
-        </article>
-        <article className="kpi-card">
-          <div className="kpi-card__header">
-            <span className="kpi-card__label">COÛT ESTIMÉ</span>
-          </div>
-          <div className="kpi-card__value">{usage ? fmt.currency(usage.totalCost) : '—'}</div>
-        </article>
-        <article className="kpi-card">
-          <div className="kpi-card__header">
-            <span className="kpi-card__label">REQUÊTES</span>
-          </div>
-          <div className="kpi-card__value">{usage ? fmt.num(usage.requestCount) : '—'}</div>
-        </article>
+      <section className="dashboard-kpi-section" aria-label={pages.dashboard.kpiAria}>
+        <div className="section__header">
+          <h2 className="section__title">{pages.dashboard.kpiSection}</h2>
+          <Link to="/usage" className="card__link">{pages.dashboard.viewUsageDetail}</Link>
+        </div>
+        <div className="kpi-grid">
+          <article className="kpi-card">
+            <div className="kpi-card__header">
+              <span className="kpi-card__label">{labels.providers}</span>
+            </div>
+            <div className="kpi-card__value">{providers.length}</div>
+            <span className="kpi-card__trend kpi-card__trend--neutral">
+              {pages.dashboard.providersTrend
+                .replace('{active}', String(activeCount))
+                .replace('{local}', String(localCount))}
+            </span>
+          </article>
+          <article className="kpi-card">
+            <div className="kpi-card__header">
+              <span className="kpi-card__label">{labels.tokens}</span>
+            </div>
+            <div className="kpi-card__value">{usage ? fmt.num(usage.totalTokens) : '—'}</div>
+          </article>
+          <article className="kpi-card">
+            <div className="kpi-card__header">
+              <span className="kpi-card__label">{labels.estimatedCost}</span>
+            </div>
+            <div className="kpi-card__value">{usage ? fmt.currency(usage.totalCost) : '—'}</div>
+          </article>
+          <article className="kpi-card">
+            <div className="kpi-card__header">
+              <span className="kpi-card__label">{labels.requests}</span>
+            </div>
+            <div className="kpi-card__value">{usage ? fmt.num(usage.requestCount) : '—'}</div>
+          </article>
+        </div>
       </section>
 
       <section className="section card">
         <div className="card__header">
-          <h2 className="card__title">Providers</h2>
-          <Link to="/providers" className="card__link">Gérer →</Link>
+          <h2 className="card__title">{pages.dashboard.providersTitle}</h2>
+          <Link to="/providers" className="card__link">{common.manage}</Link>
         </div>
         <div className="card__body">
           {!loading && providers.length === 0 ? (
-            <p className="table-empty">Aucun provider configuré</p>
+            <p className="table-empty">{common.noProviders}</p>
           ) : (
             <div className="provider-health-grid">
               {providers.map((p) => {
@@ -105,7 +113,7 @@ export function DashboardPage() {
                   >
                     <span
                       className={`provider-health-item__dot ${p.enabled ? 'provider-health-item__dot--ok' : 'provider-health-item__dot--error'}`}
-                      aria-label={p.enabled ? 'Actif' : 'Inactif'}
+                      aria-label={p.enabled ? common.active : common.inactive}
                     />
                     <div className="provider-health-item__tags">
                       <span className="provider-health-item__name">{p.name}</span>
@@ -114,7 +122,7 @@ export function DashboardPage() {
                           {type === 'onprem' ? 'LOCAL' : 'CLOUD'}
                         </span>
                         <Badge variant={p.enabled ? 'success' : 'secondary'} dot>
-                          {p.enabled ? 'Actif' : 'Inactif'}
+                          {p.enabled ? common.active : common.inactive}
                         </Badge>
                       </div>
                     </div>
