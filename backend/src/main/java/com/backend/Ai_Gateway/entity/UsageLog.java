@@ -29,7 +29,6 @@ public class UsageLog {
     private RequestStatus status;
     private Instant createdAt;
 
-    @JsonIgnore
     @ManyToOne
     private User user;
 

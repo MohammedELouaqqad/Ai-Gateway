@@ -13,6 +13,7 @@ import { ProvidersPage } from './pages/ProvidersPage'
 import { RoutingPage } from './pages/RoutingPage'
 import { RateLimitingPage } from './pages/RateLimitingPage'
 import { ObservabilityPage } from './pages/ObservabilityPage'
+import { AdminHealthPage } from './pages/AdminHealthPage'
 import { SettingsPage } from './pages/SettingsPage'
 
 function Authed({ children }: { children: ReactNode }) {
@@ -49,6 +50,7 @@ export default function App() {
       <Route path="/routing" element={<AdminOnly><RoutingPage /></AdminOnly>} />
       <Route path="/rate-limiting" element={<AdminOnly><RateLimitingPage /></AdminOnly>} />
       <Route path="/observability" element={<AdminOnly><ObservabilityPage /></AdminOnly>} />
+      <Route path="/admin/health" element={<AdminOnly><AdminHealthPage /></AdminOnly>} />
     </Routes>
   )
 }

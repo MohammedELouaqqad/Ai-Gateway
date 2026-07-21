@@ -35,9 +35,11 @@ public final class SeedCatalog {
             new ProviderSeed("vLLM", "http://localhost:8000/v1", ProviderType.VLLM, ProviderLocation.LOCAL, 5)
     );
 
+    /** Modèle Ollama local recommandé (doit matcher `ollama list`). */
+    public static final String PREFERRED_OLLAMA_MODEL = "llama3.2:1b";
+
     public static final List<ModelSeed> MODELS = List.of(
-            new ModelSeed("Qwen 0.5B", "qwen2.5:0.5b", "Ollama Local"),
-            new ModelSeed("Llama 3.2 1B", "llama3.2:1b", "Ollama Local"),
+            new ModelSeed("Llama 3.2 1B", PREFERRED_OLLAMA_MODEL, "Ollama Local"),
             new ModelSeed("GPT-4o mini", "gpt-4o-mini", "OpenAI"),
             new ModelSeed("GPT-4o", "gpt-4o", "OpenAI"),
             new ModelSeed("GPT-4o (Azure)", "gpt-4o-azure", "Azure OpenAI"),

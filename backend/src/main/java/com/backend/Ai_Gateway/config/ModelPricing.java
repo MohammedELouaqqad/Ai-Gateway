@@ -15,7 +15,6 @@ public final class ModelPricing {
     private static final PricePerMillion FREE = new PricePerMillion(0, 0);
 
     private static final Map<String, PricePerMillion> BY_MODEL_NAME = Map.ofEntries(
-            Map.entry("qwen2.5:0.5b", FREE),
             Map.entry("llama3.2:1b", FREE),
             Map.entry("meta-llama/Meta-Llama-3-8B-Instruct", FREE),
             Map.entry("mistral-7b-instruct", FREE),

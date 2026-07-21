@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -46,6 +47,7 @@ public class DevDataSeeder implements ApplicationRunner {
     }
 
     @Override
+    @Transactional
     public void run(ApplicationArguments args) {
         if (!seedEnabled) {
             return;
@@ -104,9 +106,63 @@ public class DevDataSeeder implements ApplicationRunner {
             log.info("Seed: modèle {} créé (inactif, id={})", saved.getName(), saved.getId());
         }
 
+        activatePreferredOllamaModel(providersByName);
+
         if (user.getId() != 1L) {
             log.warn("Seed: l'utilisateur de dev n'a pas l'id 1 (id={}). Les controllers dev utilisent userId=1.", user.getId());
         }
+    }
+
+    /**
+     * Active Ollama + {@link SeedCatalog#PREFERRED_OLLAMA_MODEL} comme défaut,
+     * et désactive les anciens modèles Ollama absents du catalogue (ex. qwen).
+     */
+    private void activatePreferredOllamaModel(Map<String, Provider> providersByName) {
+        Provider ollama = providersByName.get("Ollama Local");
+        if (ollama == null) {
+            ollama = providerRepository.findByName("Ollama Local").orElse(null);
+        }
+        if (ollama == null) {
+            log.warn("Seed: provider Ollama Local introuvable, modèle préféré non activé");
+            return;
+        }
+        if (!ollama.isEnabled()) {
+            ollama.setEnabled(true);
+            providerRepository.save(ollama);
+            log.info("Seed: provider Ollama Local activé");
+        }
+
+        Model preferred = modelRepository.findByName(SeedCatalog.PREFERRED_OLLAMA_MODEL).orElse(null);
+        if (preferred == null) {
+            log.warn("Seed: modèle {} introuvable", SeedCatalog.PREFERRED_OLLAMA_MODEL);
+            return;
+        }
+
+        for (Model m : modelRepository.findAll()) {
+            boolean isPreferred = SeedCatalog.PREFERRED_OLLAMA_MODEL.equals(m.getName());
+            boolean isOllama = m.getProvider() != null
+                    && m.getProvider().getType() == com.backend.Ai_Gateway.enums.ProviderType.OLLAMA;
+            if (isPreferred) {
+                m.setEnabled(true);
+                m.setDefault(true);
+                m.setProvider(ollama);
+                modelRepository.save(m);
+            } else {
+                if (m.isDefault()) {
+                    m.setDefault(false);
+                    modelRepository.save(m);
+                }
+                // Anciens tags Ollama hors catalogue (ex. qwen2.5:0.5b) → inactifs
+                if (isOllama && SeedCatalog.MODELS.stream().noneMatch(s -> s.name().equals(m.getName()))) {
+                    if (m.isEnabled()) {
+                        m.setEnabled(false);
+                        modelRepository.save(m);
+                        log.info("Seed: ancien modèle Ollama désactivé ({})", m.getName());
+                    }
+                }
+            }
+        }
+        log.info("Seed: modèle par défaut = {}", SeedCatalog.PREFERRED_OLLAMA_MODEL);
     }
 
     private String resolveBaseUrl(SeedCatalog.ProviderSeed seed) {

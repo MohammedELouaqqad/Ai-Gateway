@@ -1488,12 +1488,116 @@ textarea:focus-visible {
   justify-content: flex-end;
 }
 
+.scope-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.usage-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.scope-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.scope-badge--session {
+  color: var(--text-secondary);
+}
+
+.scope-badge--range {
+  color: var(--accent, #3b82f6);
+  border-color: color-mix(in srgb, var(--accent, #3b82f6) 35%, var(--border-subtle));
+}
+
+.scope-badge--total {
+  color: var(--text-secondary);
+}
+
+.usage-summary-strip__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+}
+
+.usage-summary-strip__value {
+  font-size: 1.35rem;
+  font-weight: 650;
+  font-family: var(--font-mono);
+  margin: 0.35rem 0;
+}
+
+.usage-trends-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+}
+
+.obs-mini-title {
+  margin: 0 0 var(--space-2);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 900px) {
+  .usage-summary-strip__grid,
+  .usage-trends-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* --- Metrics Row (observability) --- */
 .metrics-row {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: var(--space-4);
   margin-bottom: var(--space-6);
+}
+
+.obs-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+}
+
+@media (max-width: 900px) {
+  .obs-tools-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.obs-tool-card__desc {
+  margin: 0 0 var(--space-4);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.obs-tool-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
 }
 
 .metric-chart-card {

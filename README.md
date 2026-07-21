@@ -21,7 +21,7 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React) avec chat syn
 - Java 17, Maven
 - PostgreSQL
 - Node.js 18+ (si front natif)
-- [Ollama](https://ollama.com) (ex. `qwen2.5:0.5b`)
+- [Ollama](https://ollama.com) (ex. `llama3.2:1b`)
 - Optionnel : `OPENAI_API_KEY` pour GPT
 
 ## Démarrage rapide (natif)
@@ -46,20 +46,26 @@ Ouvrir http://localhost:5173
 ## Docker (stack complète)
 
 ```bash
-# Ollama doit tourner sur l’hôte
-docker compose --profile stack up --build
+# Ollama doit tourner sur l’hôte (Keycloak est dans Compose)
+docker compose --profile stack up --build -d
 ```
 
-- Front : http://localhost:5173  
-- API : http://localhost:8080  
-- Postgres : port hôte `5433`
+| Service    | URL |
+|------------|-----|
+| Frontend   | http://localhost:5173 |
+| API        | http://localhost:8080 |
+| Keycloak   | http://localhost:8180 (`admin` / `admin`) |
+| Prometheus | http://localhost:9090 |
+| Grafana    | http://localhost:3000 (`admin` / `admin`) |
+| Postgres   | `localhost:5433` |
 
 Prod-like (seed off, logs quiet) :
 
 ```bash
-SPRING_PROFILES_ACTIVE=prod docker compose --profile stack up --build
+SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stack up --build -d
 ```
 
+**Note prod réelle :** Compose convient pour un serveur unique / démo. Pour une prod HA, préférer Kubernetes ou un IdP managé ; Keycloak devrait alors tourner en mode `start` (pas `start-dev`) avec sa propre base Postgres.
 ## Premier test
 
 1. **Fournisseurs** → activer Ollama (et/ou OpenAI)
@@ -87,7 +93,7 @@ SPRING_PROFILES_ACTIVE=prod docker compose --profile stack up --build
 curl -N -X POST http://localhost:8080/api/chat/stream \
   -H 'Content-Type: application/json' \
   -H 'Accept: text/event-stream' \
-  -d '{"content":"Bonjour","model":"qwen2.5:0.5b","stream":true}'
+  -d '{"content":"Bonjour","model":"llama3.2:1b","stream":true}'
 ```
 
 ## Variables d'environnement
@@ -106,13 +112,27 @@ SPRING_PROFILES_ACTIVE=dev   # ou prod
 
 Ne jamais committer `backend/.env`.
 
+### Monitoring (Prometheus + Grafana)
+
+```bash
+docker compose up -d prometheus grafana
+```
+
+- Prometheus : http://localhost:9090  
+- Grafana : http://localhost:3000 (`admin` / `admin`)  
+- Détails : [monitoring/README.md](monitoring/README.md)
+
 ### Auth Keycloak
 
-1. Realm `Ai-Gateway`, client public `Ai-Gateway-frontend` (Direct Access Grants pour le login dev).
-2. Backend valide le JWT via `spring.security.oauth2.resourceserver.jwt.issuer-uri`.
-3. Front : `/login` → password grant (proxy Vite `/realms`) → `Authorization: Bearer` sur `/api/**`.
-4. Chaque user Keycloak est synchronisé en BDD (`users.keycloak_id` = claim `sub`).
-5. Les **rôles** viennent de Keycloak (`realm_access.roles`) et sont mappés en `ROLE_*` côté Spring.
+Keycloak est démarré par Compose (profil `stack`) sur le port **8180**.
+
+1. Ouvrir http://localhost:8180 → login `admin` / `admin`.
+2. Créer le realm `Ai-Gateway`, client public `Ai-Gateway-frontend` (Direct Access Grants pour le login dev).
+3. Créer les rôles realm `USER`, `DEVELOPER`, `ADMIN` et un utilisateur de test.
+4. Backend : `iss` JWT = `http://localhost:8180/realms/Ai-Gateway` ; JWKS récupéré en interne via `http://keycloak:8080/.../certs`.
+5. Front : `/login` → password grant (proxy Vite `/realms`) → `Authorization: Bearer` sur `/api/**`.
+6. Chaque user Keycloak est synchronisé en BDD (`users.keycloak_id` = claim `sub`).
+7. Les **rôles** viennent de Keycloak (`realm_access.roles`) et sont mappés en `ROLE_*` côté Spring.
 
 #### Rôles Keycloak (realm roles)
 
@@ -149,7 +169,9 @@ cd backend && ./mvnw test
 ## Roadmap (non livré)
 
 - API Keys gateway
-- Rate limiting, observabilité avancée
+- Rate limiting (quotas / budget)
 - Adaptateurs stream vLLM / SGLang
 - Pricing éditable admin
 - OIDC Authorization Code + PKCE (remplacer password grant)
+
+Observabilité hub (liens Grafana/Prometheus + santé Actuator) : page `/observability` livrée.

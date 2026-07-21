@@ -44,6 +44,17 @@ export default defineConfig({
           })
         },
       },
+      // Actuator (health) — hub Observability
+      '/actuator': {
+        target: apiProxyTarget,
+        changeOrigin: true,
+      },
+      // Prometheus health (scrape status) — avoid browser CORS
+      '/prom-api': {
+        target: process.env.PROMETHEUS_PROXY_TARGET ?? 'http://localhost:9090',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/prom-api/, ''),
+      },
     },
   },
 })

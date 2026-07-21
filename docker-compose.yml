@@ -1,15 +1,19 @@
 # Dev local — AI Gateway
 #
-# PostgreSQL seul (recommandé : backend/frontend en natif sur la machine) :
+# PostgreSQL seul :
 #   docker compose up database
-#   export DB_URL=jdbc:postgresql://localhost:5433/Ai_Gateway_DB
-#   ./mvnw spring-boot:run   # backend
-#   npm run dev              # frontend
 #
-# Stack complète dans Docker (Ollama doit tourner sur l'hôte) :
-#   docker compose --profile stack up --build
-# Prod-like (seed off, logs quiet) :
-#   SPRING_PROFILES_ACTIVE=prod docker compose --profile stack up --build
+# Stack complète (Postgres + Keycloak + backend + frontend + Prometheus + Grafana) :
+#   docker compose --profile stack up --build -d
+#
+# Monitoring seul (si backend natif sur :8080) :
+#   docker compose up -d prometheus grafana
+#
+# Prod-like (seed off) :
+#   SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stack up --build -d
+#
+# Ollama reste sur l'hôte. Keycloak est dans Compose (profil stack).
+# Après le 1er démarrage : créer le realm Ai-Gateway + client (voir README).
 
 services:
   database:
@@ -28,9 +32,38 @@ services:
       timeout: 5s
       retries: 5
 
+  # IdP — issuer public http://localhost:8180 (JWT iss) ; DNS interne "keycloak"
+  keycloak:
+    profiles: ["stack"]
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--http-port=8080"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: "8180"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8180:8080"
+    healthcheck:
+      # Management port (health) — Keycloak 26
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
   backend:
     profiles: ["stack"]
     build: ./backend
+    # Alias DNS "gateway" pour le scrape Prometheus
+    hostname: gateway
+    networks:
+      default:
+        aliases:
+          - gateway
     ports:
       - "8080:8080"
     env_file:
@@ -41,13 +74,16 @@ services:
       DB_PASSWORD: postgres
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       APP_SEED_ENABLED: "true"
-      # iss du JWT reste localhost:8180 ; JWKS joignable depuis le conteneur via host-gateway
+      # iss du JWT = URL vue par le navigateur (port hôte 8180)
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/Ai-Gateway
-      KEYCLOAK_JWK_SET_URI: http://host.docker.internal:8180/realms/Ai-Gateway/protocol/openid-connect/certs
+      # JWKS via DNS Docker (évite host.docker.internal pour Keycloak)
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/Ai-Gateway/protocol/openid-connect/certs
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       database:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
 
   frontend:
@@ -57,14 +93,62 @@ services:
       - "5173:5173"
     environment:
       API_PROXY_TARGET: http://backend:8080
-      # Keycloak tourne sur l'hôte (pas dans ce compose) — pas localhost du conteneur
-      KEYCLOAK_PROXY_TARGET: http://host.docker.internal:8180
-      # Host vu par Keycloak → claim iss du JWT (doit matcher KEYCLOAK_ISSUER_URI)
+      KEYCLOAK_PROXY_TARGET: http://keycloak:8080
       KEYCLOAK_PUBLIC_HOST: localhost:8180
+      VITE_GRAFANA_URL: http://localhost:3000
+      VITE_PROMETHEUS_URL: http://localhost:9090
+      PROMETHEUS_PROXY_TARGET: http://prometheus:9090
+    depends_on:
+      backend:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/ai-gateway.json
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
-      - backend
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 volumes:
   db-data:
+  prometheus_data:
+  grafana_data:
