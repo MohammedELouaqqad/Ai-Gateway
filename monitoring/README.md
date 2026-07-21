@@ -1,15 +1,24 @@
-# Monitoring — AI Gateway (Prometheus + Grafana)
+# Monitoring — AI Gateway (Prometheus + Grafana + UI)
 
-Stack de supervision locale pour le backend Spring Boot (métriques JVM, HTTP, latence chat).
+Deux couches complémentaires :
+
+| Couche | Où | Contenu |
+|--------|-----|---------|
+| **Ops** | Prometheus + Grafana | JVM, CPU, HTTP (`http_server_requests_*`), targets scrape |
+| **Produit** | UI Gateway | Coût, tokens, journal d’appels, taux d’erreur métier → **PostgreSQL** (`usage_logs`) |
 
 ## URLs
 
-| Service    | URL                         | Identifiants        |
-|------------|-----------------------------|---------------------|
-| Prometheus | http://localhost:9090       | —                   |
-| Grafana    | http://localhost:3000       | `admin` / `admin`   |
-| Actuator   | http://localhost:8080/actuator/prometheus | public (scrape) |
-| Health     | http://localhost:8080/actuator/health     | public              |
+| Service / page | URL | Accès |
+|----------------|-----|-------|
+| Prometheus | http://localhost:9090 | — |
+| Grafana | http://localhost:3000 | `admin` / `admin` |
+| Actuator metrics | http://localhost:8080/actuator/prometheus | public (scrape) |
+| Actuator health | http://localhost:8080/actuator/health | public (détails selon auth) |
+| Dashboard app | http://localhost:5173/dashboard | USER+ |
+| Usage | http://localhost:5173/usage | USER+ |
+| Observability | http://localhost:5173/observability | ADMIN |
+| Santé système | http://localhost:5173/admin/health | ADMIN |
 
 **Changer le mot de passe Grafana** en prod (`GF_SECURITY_ADMIN_PASSWORD`).
 
@@ -102,12 +111,25 @@ Actuator + Micrometer exposent automatiquement :
 - **Process / système** : CPU (`process_cpu_usage`, `system_cpu_usage`)
 - **HTTP** : taux et latence par URI/status (`http_server_requests_seconds_*`)
 
-La latence des endpoints `/api/chat` et `/api/chat/stream` sert de **proxy** de la latence provider (temps total Gateway → LLM → réponse).
+Percentiles HTTP (config `application.properties`, sans code Java) :
 
-### Tokens LLM / latence provider “fine”
+```properties
+management.metrics.distribution.percentiles.http.server.requests=0.5,0.95,0.99
+```
 
-Non instrumentés en Java pour l’instant (contrainte : pas de code métier Micrometer).  
-Quand vous branchez des compteurs custom (`Counter` / `Timer` Micrometer), ils apparaîtront sur `/actuator/prometheus` et pourront être ajoutés au dashboard.
+La latence des endpoints `/api/chat` et `/api/chat/stream` sert de **proxy** de la latence provider (temps total Gateway → LLM → réponse). Sur un modèle local (ex. `llama3.2:1b`), une moyenne de plusieurs dizaines de secondes peut être normale.
+
+### Tokens / coût / journal
+
+Stockés dans **PostgreSQL** via `UsageService` après chaque chat. APIs :
+
+- `GET /api/usage/summary`
+- `GET /api/usage/logs` (paginé)
+- `GET /api/usage/by-model`
+- `GET /api/usage/by-user` (ADMIN)
+- `GET /api/usage/export/csv`
+
+Prometheus **ne remplace pas** ces données (pas de coût par appel #N).
 
 ## Sécurité scrape
 
