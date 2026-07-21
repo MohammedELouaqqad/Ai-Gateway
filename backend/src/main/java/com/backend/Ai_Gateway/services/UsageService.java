@@ -1,6 +1,5 @@
 package com.backend.Ai_Gateway.services;
 
-import com.backend.Ai_Gateway.config.ModelPricing;
 import com.backend.Ai_Gateway.entity.Model;
 import com.backend.Ai_Gateway.entity.UsageLog;
 import com.backend.Ai_Gateway.entity.User;
@@ -31,15 +30,18 @@ public class UsageService {
     private final UserRepository userRepository;
     private final ModelRepository modelRepository;
     private final UsageLogRepository usageLogRepository;
+    private final ModelPricingService modelPricingService;
 
     public UsageService(
             UserRepository userRepository,
             ModelRepository modelRepository,
-            UsageLogRepository usageLogRepository
+            UsageLogRepository usageLogRepository,
+            ModelPricingService modelPricingService
     ) {
         this.userRepository = userRepository;
         this.modelRepository = modelRepository;
         this.usageLogRepository = usageLogRepository;
+        this.modelPricingService = modelPricingService;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -91,9 +93,7 @@ public class UsageService {
     }
 
     public double calculateCost(int promptTokens, int completionTokens, String modelName) {
-        ModelPricing.PricePerMillion pricing = ModelPricing.forModel(modelName);
-        return (promptTokens / 1_000_000.0) * pricing.inputUsd()
-                + (completionTokens / 1_000_000.0) * pricing.outputUsd();
+        return modelPricingService.calculateCostEur(promptTokens, completionTokens, modelName);
     }
 
     public List<UsageLog> getUsageByUserId(Long userId) {

@@ -42,6 +42,7 @@ public class ChatService {
     private final MessageService messageService;
     private final ModelService modelService;
     private final UsageService usageService;
+    private final UsageGuardService usageGuardService;
     private final LLMProviderRouter llmProviderRouter;
 
     public ChatService(
@@ -51,6 +52,7 @@ public class ChatService {
             MessageService messageService,
             ModelService modelService,
             UsageService usageService,
+            UsageGuardService usageGuardService,
             LLMProviderRouter llmProviderRouter
     ) {
         this.conversationRepository = conversationRepository;
@@ -59,11 +61,13 @@ public class ChatService {
         this.messageService = messageService;
         this.modelService = modelService;
         this.usageService = usageService;
+        this.usageGuardService = usageGuardService;
         this.llmProviderRouter = llmProviderRouter;
     }
 
     public ChatResponse handleChat(Long userId, UserChatRequest userChatRequest) {
         PreparedChat prepared = prepareChat(userId, userChatRequest, false);
+        usageGuardService.assertAllowed(userId, prepared.model(), prepared.request().messages());
         long startedAt = System.currentTimeMillis();
 
         try {
@@ -90,6 +94,7 @@ public class ChatService {
      */
     public SseEmitter handleChatStream(Long userId, UserChatRequest userChatRequest) {
         PreparedChat prepared = prepareChat(userId, userChatRequest, true);
+        usageGuardService.assertAllowed(userId, prepared.model(), prepared.request().messages());
         long startedAt = System.currentTimeMillis();
 
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
@@ -243,6 +248,13 @@ public class ChatService {
                 response.completionTokens(),
                 latencyMs,
                 RequestStatus.SUCCESS
+        );
+        usageGuardService.recordSuccess(
+                userId,
+                prepared.model(),
+                response.promptTokens() != null ? response.promptTokens() : 0,
+                response.completionTokens() != null ? response.completionTokens() : 0,
+                latencyMs
         );
     }
 

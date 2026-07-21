@@ -7,5 +7,11 @@ public record ApiErrorResponse(
         int status,
         String error,
         String message,
-        String path
-) {}
+        String path,
+        String reason,
+        Instant resetsAt
+) {
+    public ApiErrorResponse(Instant timestamp, int status, String error, String message, String path) {
+        this(timestamp, status, error, message, path, null, null);
+    }
+}

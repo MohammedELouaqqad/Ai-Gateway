@@ -13,6 +13,7 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React) avec chat syn
 | Dashboard (`/dashboard`) | KPI récents (scopes 24h / 7j / 30j / session), taux d’erreur, latence moy., conso tokens/coût |
 | Usage (`/usage`) | Journal paginé (PostgreSQL), filtres, tendances, p50/p95/p99, export CSV |
 | Observability (`/observability`) | ADMIN — fiabilité / latence (p50/p95), liens Grafana & Prometheus |
+| Rate limiting (`/rate-limiting`) | ADMIN — config + état vitesse (req/min, req/jour) et budget (€) |
 | Santé système (`/admin/health`) | ADMIN — Gateway, Postgres, Prometheus + conso par utilisateur |
 | Prompt templates | CRUD + insert chat (`{{content}}`) |
 | Auth | Keycloak JWT (Resource Server) — find-or-create user via `sub` |
@@ -112,7 +113,23 @@ SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stac
 | GET | `/api/usage/by-model?…` | Agrégat par modèle |
 | GET | `/api/usage/by-user?…` | Agrégat par utilisateur (**ADMIN**) |
 | GET | `/api/usage/export/csv?…` | Export CSV (streaming réponse) |
+| GET/PUT | `/api/admin/guardrails/config` | Limites rate/budget (**ADMIN**) |
+| GET | `/api/admin/guardrails/status` | Consommation vs plafonds (**ADMIN**) |
 | GET/POST | `/api/prompt-templates` | Templates |
+
+### Garde-fous LLM (rate limit + budget)
+
+Point de passage : `ChatService` (sync + stream), **avant** tout appel provider.
+
+| Axe | Règle (défaut) | Ollama local | Cloud payant |
+|-----|----------------|--------------|--------------|
+| Vitesse | 10 req/min/user · 500 req/jour/user | Oui | Oui |
+| Montant | 5 €/user/jour · 50 €/global/jour | Non (coût 0) | Oui |
+
+Config : `application-guardrails.yml` (prix EUR / 1K tokens).  
+HTTP **429** + champs `reason` / `resetsAt`.  
+Métriques : `ai_gateway_tokens_total`, `ai_gateway_cost_eur_total`, `ai_gateway_requests_blocked_total`, `ai_gateway_llm_latency`, `ai_gateway_budget_global_ratio`.  
+Test : `scripts/test-guardrails.sh`.
 
 ### Exemple stream
 
@@ -167,7 +184,7 @@ Keycloak est démarré par Compose (profil `stack`) sur le port **8180**.
 |------|----------------|
 | `USER` | Chat, conversations, templates, dashboard, usage, profil |
 | `DEVELOPER` | Comme USER + items roadmap visibles dans le menu |
-| `ADMIN` | Mutations Models/Providers + `/observability`, `/admin/health`, `/api/usage/by-user` |
+| `ADMIN` | Mutations Models/Providers + `/observability`, `/admin/health`, `/rate-limiting`, `/api/usage/by-user` |
 
 Assignez au moins `USER` (ou `ADMIN`) à chaque compte. Sans `ADMIN`, les boutons d’admin sont masqués côté front et l’API répond **403**.
 
@@ -196,7 +213,6 @@ cd backend && ./mvnw test
 ## Roadmap (non livré)
 
 - API Keys gateway
-- Rate limiting (quotas / budget)
 - Adaptateurs stream vLLM / SGLang
-- Pricing éditable admin
+- Pricing éditable admin (persisté BDD ; runtime UI existe déjà)
 - OIDC Authorization Code + PKCE (remplacer password grant)

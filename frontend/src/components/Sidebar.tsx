@@ -115,7 +115,7 @@ export function Sidebar() {
             to: '/rate-limiting',
             label: nav.rateLimit,
             icon: Gauge,
-            badge: 'roadmap' as const,
+            badge: 'mvp' as const,
             adminOnly: true,
           },
         ],

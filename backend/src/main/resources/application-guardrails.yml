@@ -1,0 +1,29 @@
+# Guardrails — rate limit (vitesse) + budget (montant)
+# Surchargeables via env / PUT /api/admin/guardrails/config (runtime jusqu'au restart)
+
+app:
+  guardrails:
+    enabled: true
+    rate-limit:
+      requests-per-minute: ${GUARD_RPM:10}
+      requests-per-day: ${GUARD_RPD:500}
+    budget:
+      # EUR / jour — s'applique uniquement aux modèles payants (pricing > 0)
+      global-per-day-eur: ${GUARD_BUDGET_GLOBAL_EUR:50}
+      user-per-day-eur: ${GUARD_BUDGET_USER_EUR:5}
+    estimate:
+      # Tokens completion assumés pour l'estimation AVANT l'appel
+      assumed-completion-tokens: 500
+      # Approximation chars → tokens pour le prompt
+      chars-per-token: 4
+    # Prix EUR pour 1000 tokens (input / output). Absent = gratuit (ex. Ollama).
+    pricing:
+      gpt-4o-mini:
+        input-per-1k-eur: 0.000138
+        output-per-1k-eur: 0.000552
+      gpt-4o:
+        input-per-1k-eur: 0.0023
+        output-per-1k-eur: 0.0092
+      gpt-4o-azure:
+        input-per-1k-eur: 0.0023
+        output-per-1k-eur: 0.0092

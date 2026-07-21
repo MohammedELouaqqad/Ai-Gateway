@@ -41,6 +41,7 @@ class ChatServiceHandleChatTest {
     @Mock MessageService messageService;
     @Mock ModelService modelService;
     @Mock UsageService usageService;
+    @Mock UsageGuardService usageGuardService;
     @Mock LLMProviderRouter llmProviderRouter;
 
     private ChatService chatService;
@@ -54,6 +55,7 @@ class ChatServiceHandleChatTest {
                 messageService,
                 modelService,
                 usageService,
+                usageGuardService,
                 llmProviderRouter
         );
     }

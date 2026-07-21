@@ -1,6 +1,7 @@
 package com.backend.Ai_Gateway.controller;
 
 import com.backend.Ai_Gateway.controller.dto.ApiErrorResponse;
+import com.backend.Ai_Gateway.exceptions.GuardrailsExceededException;
 import com.backend.Ai_Gateway.exceptions.ProviderNotImplementedException;
 import com.backend.Ai_Gateway.exceptions.RessourceAlreadyExistsException;
 import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
@@ -54,6 +55,23 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         return build(HttpStatus.BAD_REQUEST, "Corps de requête invalide", request);
+    }
+
+    @ExceptionHandler(GuardrailsExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleGuardrails(
+            GuardrailsExceededException ex,
+            HttpServletRequest request
+    ) {
+        ApiErrorResponse body = new ApiErrorResponse(
+                Instant.now(),
+                HttpStatus.TOO_MANY_REQUESTS.value(),
+                HttpStatus.TOO_MANY_REQUESTS.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI(),
+                ex.getReason().metricLabel(),
+                ex.getResetsAt()
+        );
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(body);
     }
 
     @ExceptionHandler(ProviderNotImplementedException.class)
