@@ -2,8 +2,8 @@ import { Link } from 'react-router-dom'
 import { Badge } from './Badge'
 import { LanguageToggle } from './LanguageToggle'
 import { ThemeToggle } from './ThemeToggle'
+import { logout } from '../auth/keycloak'
 import { getRoles, parseAccessToken } from '../auth/roles'
-import { clearAccessToken } from '../auth/session'
 import { useI18n } from '../i18n'
 
 interface HeaderProps {
@@ -31,8 +31,7 @@ export function Header({ breadcrumbs }: HeaderProps) {
   const roles = highlightRoles(getRoles())
 
   function onLogout() {
-    clearAccessToken()
-    window.location.assign('/login')
+    logout()
   }
 
   return (

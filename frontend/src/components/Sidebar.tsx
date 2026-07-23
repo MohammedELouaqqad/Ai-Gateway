@@ -16,6 +16,7 @@ import {
   Split,
 } from 'lucide-react'
 import { getRoles, hasRole, isAdmin, parseAccessToken } from '../auth/roles'
+import { beginLogin } from '../auth/keycloak'
 import { isAuthenticated } from '../auth/session'
 import { useI18n } from '../i18n'
 
@@ -108,7 +109,7 @@ export function Sidebar() {
             to: '/routing',
             label: nav.routing,
             icon: Split,
-            badge: 'roadmap' as const,
+            badge: 'mvp' as const,
             adminOnly: true,
           },
           {
@@ -169,7 +170,13 @@ export function Sidebar() {
         <div className="sidebar__footer-links">
           <NavLink to="/profile" className="sidebar__footer-link">{nav.profile}</NavLink>
           {!authed && (
-            <NavLink to="/login" className="sidebar__footer-link">{nav.login}</NavLink>
+            <button
+              type="button"
+              className="sidebar__footer-link"
+              onClick={() => void beginLogin('/')}
+            >
+              {nav.login}
+            </button>
           )}
         </div>
       </div>

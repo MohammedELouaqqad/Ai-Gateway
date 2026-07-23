@@ -53,6 +53,22 @@ public class UsageService {
             long latencyMs,
             RequestStatus status
     ) {
+        logChatUsage(userId, modelId, promptTokens, completionTokens, latencyMs, status, null, null, null, null);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logChatUsage(
+            Long userId,
+            Long modelId,
+            Integer promptTokens,
+            Integer completionTokens,
+            long latencyMs,
+            RequestStatus status,
+            String routingAppliedReason,
+            String routingMode,
+            String routingProfile,
+            String routingSelectedModel
+    ) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RessourceNotFoundException("User not found"));
         Model model = modelRepository.findById(modelId)
@@ -72,6 +88,10 @@ public class UsageService {
         usageLog.setStatus(status);
         usageLog.setCreatedAt(Instant.now());
         usageLog.setEstimatedCost(calculateCost(prompt, completion, model.getName()));
+        usageLog.setRoutingAppliedReason(routingAppliedReason);
+        usageLog.setRoutingMode(routingMode);
+        usageLog.setRoutingProfile(routingProfile);
+        usageLog.setRoutingSelectedModel(routingSelectedModel);
 
         usageLogRepository.save(usageLog);
     }

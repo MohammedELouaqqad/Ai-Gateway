@@ -1,4 +1,4 @@
-import { withAuthHeaders, clearAccessToken } from '../auth/session'
+import { clearAccessToken, clearIdToken, withAuthHeaders } from '../auth/session'
 
 export class ApiError extends Error {
   constructor(
@@ -28,8 +28,11 @@ async function readResponseBody(response: Response): Promise<unknown> {
 function handleUnauthorized(status: number): void {
   if (status === 401) {
     clearAccessToken()
-    if (window.location.pathname !== '/login') {
-      window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)
+    clearIdToken()
+    if (!window.location.pathname.startsWith('/auth/callback')) {
+      void import('../auth/keycloak').then((m) =>
+        m.beginLogin(window.location.pathname + window.location.search),
+      )
     }
   }
 }

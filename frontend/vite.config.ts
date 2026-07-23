@@ -3,11 +3,25 @@ import react from '@vitejs/plugin-react'
 
 const apiProxyTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:8080'
 const keycloakProxyTarget = process.env.KEYCLOAK_PROXY_TARGET ?? 'http://localhost:8180'
+const inDocker = process.env.DOCKER === 'true' || process.env.CHOKIDAR_USEPOLLING === 'true'
 
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    host: true,
+    watch: inDocker
+      ? {
+          usePolling: true,
+          interval: 500,
+        }
+      : undefined,
+    hmr: inDocker
+      ? {
+          // Navigateur sur l'hôte → HMR via port publié
+          clientPort: Number(process.env.HMR_CLIENT_PORT ?? 5173),
+        }
+      : undefined,
     proxy: {
       '/api': {
         target: apiProxyTarget,
@@ -31,7 +45,7 @@ export default defineConfig({
           })
         },
       },
-      // Évite CORS navigateur → Keycloak (token password grant en dev).
+      // Évite CORS navigateur → Keycloak (échange code→token PKCE en dev).
       // changeOrigin ferait Host=host.docker.internal en Docker → iss JWT invalide côté backend.
       // On force Host public (localhost:8180) pour que iss = KEYCLOAK_ISSUER_URI.
       '/realms': {

@@ -50,7 +50,12 @@ public class SecurityConfig {
                                 "/actuator/health/**",
                                 "/actuator/prometheus",
                                 "/actuator/info",
-                                "/error"
+                                "/error",
+                                // Swagger / OpenAPI (springdoc)
+                                "/v3/api-docs",
+                                "/v3/api-docs/**",
+                                "/swagger-ui.html",
+                                "/swagger-ui/**"
                         ).permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/**").authenticated()

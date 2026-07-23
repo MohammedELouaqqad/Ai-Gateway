@@ -3,8 +3,11 @@
 # PostgreSQL seul :
 #   docker compose up database
 #
-# Stack complète (Postgres + Keycloak + backend + frontend + Prometheus + Grafana) :
+# Stack complète (images figées — rebuild pour chaque change code) :
 #   docker compose --profile stack up --build -d
+#
+# Stack DEV live reload (volumes + HMR Vite + Spring DevTools) :
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile stack up --build
 #
 # Monitoring seul (si backend natif sur :8080) :
 #   docker compose up -d prometheus grafana
@@ -16,6 +19,8 @@
 # Après le 1er démarrage : créer le realm Ai-Gateway + client (voir README).
 
 services:
+  # Une seule instance Postgres (recommandé en local) :
+  #   Ai_Gateway_DB → backend | keycloak → IdP (bases séparées, même serveur)
   database:
     image: postgres:15
     environment:
@@ -25,14 +30,36 @@ services:
     ports:
       - "5433:5432"
     volumes:
+      # Persistance données Postgres (app + Keycloak)
       - db-data:/var/lib/postgresql/data
+      # Crée la base/user keycloak au 1er boot du volume uniquement
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d Ai_Gateway_DB"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+  # Garantit la base `keycloak` même si le volume Postgres existait déjà
+  # (initdb.d ne rejoue pas sur un data dir non vide).
+  keycloak-db-init:
+    profiles: ["stack"]
+    image: postgres:15
+    restart: "no"
+    environment:
+      PGHOST: database
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: Ai_Gateway_DB
+    volumes:
+      - ./docker/postgres/init/01-create-keycloak-db.sh:/init-keycloak-db.sh:ro
+    entrypoint: ["/bin/bash", "/init-keycloak-db.sh"]
+    depends_on:
+      database:
+        condition: service_healthy
+
   # IdP — issuer public http://localhost:8180 (JWT iss) ; DNS interne "keycloak"
+  # Stockage : Postgres (base `keycloak`), pas H2 — realm/users survivent au restart
   keycloak:
     profiles: ["stack"]
     image: quay.io/keycloak/keycloak:26.0
@@ -40,6 +67,10 @@ services:
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://database:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
       KC_HEALTH_ENABLED: "true"
       KC_HOSTNAME: localhost
       KC_HOSTNAME_PORT: "8180"
@@ -47,13 +78,18 @@ services:
       KC_HTTP_ENABLED: "true"
     ports:
       - "8180:8080"
+    depends_on:
+      database:
+        condition: service_healthy
+      keycloak-db-init:
+        condition: service_completed_successfully
     healthcheck:
-      # Management port (health) — Keycloak 26
+      # Management interface (:9000) — Keycloak 26. First boot can take 90–120s+.
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000"]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 40s
+      retries: 18
+      start_period: 120s
 
   backend:
     profiles: ["stack"]

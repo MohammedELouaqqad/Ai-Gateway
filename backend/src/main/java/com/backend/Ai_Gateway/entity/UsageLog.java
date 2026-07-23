@@ -38,4 +38,17 @@ public class UsageLog {
 
     @ManyToOne
     private Model model;
+
+    /** explicit | shadow_default | active_winner | fallback:* | none */
+    @Column(length = 64)
+    private String routingAppliedReason;
+
+    @Column(length = 16)
+    private String routingMode;
+
+    @Column(length = 16)
+    private String routingProfile;
+
+    @Column(length = 128)
+    private String routingSelectedModel;
 }

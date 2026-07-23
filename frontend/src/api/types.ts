@@ -76,7 +76,7 @@ export interface ApiMessage {
 export interface ChatRequest {
   conversationId?: number | null
   content: string
-  model: string
+  model?: string | null
   stream?: boolean
 }
 

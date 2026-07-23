@@ -2,6 +2,7 @@ package com.backend.Ai_Gateway.services;
 
 
 import com.backend.Ai_Gateway.config.ContentLimits;
+import com.backend.Ai_Gateway.config.RoutingProperties;
 import com.backend.Ai_Gateway.entity.Conversation;
 import com.backend.Ai_Gateway.entity.Message;
 import com.backend.Ai_Gateway.entity.Model;
@@ -19,6 +20,10 @@ import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.repositories.ConversationRepository;
 import com.backend.Ai_Gateway.repositories.UserRepository;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
+import com.backend.Ai_Gateway.services.routing.ProviderFailureAction;
+import com.backend.Ai_Gateway.services.routing.ProviderFailureClassifier;
+import com.backend.Ai_Gateway.services.routing.RoutingDecision;
+import com.backend.Ai_Gateway.services.routing.RoutingService;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -29,6 +34,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Service
@@ -44,6 +50,7 @@ public class ChatService {
     private final UsageService usageService;
     private final UsageGuardService usageGuardService;
     private final LLMProviderRouter llmProviderRouter;
+    private final RoutingService routingService;
 
     public ChatService(
             ConversationRepository conversationRepository,
@@ -53,7 +60,8 @@ public class ChatService {
             ModelService modelService,
             UsageService usageService,
             UsageGuardService usageGuardService,
-            LLMProviderRouter llmProviderRouter
+            LLMProviderRouter llmProviderRouter,
+            RoutingService routingService
     ) {
         this.conversationRepository = conversationRepository;
         this.userRepository = userRepository;
@@ -63,6 +71,7 @@ public class ChatService {
         this.usageService = usageService;
         this.usageGuardService = usageGuardService;
         this.llmProviderRouter = llmProviderRouter;
+        this.routingService = routingService;
     }
 
     public ChatResponse handleChat(Long userId, UserChatRequest userChatRequest) {
@@ -70,27 +79,69 @@ public class ChatService {
         usageGuardService.assertAllowed(userId, prepared.model(), prepared.request().messages());
         long startedAt = System.currentTimeMillis();
 
-        try {
-            ChatResponse response = llmProviderRouter.chat(prepared.model().getProvider(), prepared.request());
-            persistSuccess(userId, prepared, response, System.currentTimeMillis() - startedAt);
-            return response;
-        } catch (RuntimeException ex) {
-            usageService.logChatUsage(
-                    userId,
-                    prepared.model().getId(),
-                    0,
-                    0,
-                    System.currentTimeMillis() - startedAt,
-                    RequestStatus.ERROR
-            );
-            throw ex;
+        List<Model> tryOrder = buildTryOrder(prepared);
+        RuntimeException lastError = null;
+
+        for (int i = 0; i < tryOrder.size(); i++) {
+            Model candidate = tryOrder.get(i);
+            ChatRequest request = new ChatRequest(candidate.getName(), prepared.request().messages());
+            int maxRetries = routingService.effectiveConfig().getMaxRetries();
+            long backoff = routingService.effectiveConfig().getRetryBackoffMs();
+
+            for (int attempt = 0; attempt <= maxRetries; attempt++) {
+                try {
+                    ChatResponse response = llmProviderRouter.chat(candidate.getProvider(), request);
+                    PreparedChat used = prepared.withModel(candidate, request);
+                    if (i > 0) {
+                        routingService.meterFallback("fallback_after_failure");
+                        used = used.withRoutingReason("fallback:" + (lastError != null
+                                ? lastError.getClass().getSimpleName()
+                                : "error"));
+                    }
+                    attachModelToConversation(used.conversation(), candidate);
+                    persistSuccess(userId, used, response, System.currentTimeMillis() - startedAt);
+                    return response;
+                } catch (RuntimeException ex) {
+                    lastError = ex;
+                    ProviderFailureAction action = ProviderFailureClassifier.classify(ex, false);
+                    if (action == ProviderFailureAction.RETRY_SAME && attempt < maxRetries) {
+                        sleepQuietly(backoff * (attempt + 1));
+                        continue;
+                    }
+                    if (action == ProviderFailureAction.FALLBACK_NEXT && i + 1 < tryOrder.size()) {
+                        routingService.meterFallback(ProviderFailureClassifier.reasonLabel(action, ex));
+                        break;
+                    }
+                    if (action == ProviderFailureAction.RETRY_SAME && i + 1 < tryOrder.size()) {
+                        routingService.meterFallback(ProviderFailureClassifier.reasonLabel(action, ex));
+                        break;
+                    }
+                    usageService.logChatUsage(
+                            userId,
+                            candidate.getId(),
+                            0,
+                            0,
+                            System.currentTimeMillis() - startedAt,
+                            RequestStatus.ERROR,
+                            prepared.routingReason(),
+                            prepared.routingMode(),
+                            prepared.routingProfile(),
+                            prepared.routingSelectedModel()
+                    );
+                    throw ex;
+                }
+            }
         }
+
+        if (lastError != null) {
+            throw lastError;
+        }
+        throw new IllegalStateException("No routable model available");
     }
 
     /**
      * Streaming SSE : chaque {@link ChatChunk} est relayé immédiatement.
-     * L'adaptateur stream est validé dans {@link #prepareChat} avant tout
-     * {@link SseEmitter} (sinon 501 JSON via GlobalExceptionHandler).
+     * Fallback multi-modèle non appliqué une fois des chunks envoyés (risque double facturation).
      */
     public SseEmitter handleChatStream(Long userId, UserChatRequest userChatRequest) {
         PreparedChat prepared = prepareChat(userId, userChatRequest, true);
@@ -101,6 +152,7 @@ public class ChatService {
         StringBuilder fullContent = new StringBuilder();
         AtomicReference<ChatChunk> lastDoneChunk = new AtomicReference<>();
         AtomicReference<Disposable> subscriptionRef = new AtomicReference<>();
+        AtomicBoolean anyBytes = new AtomicBoolean(false);
 
         Runnable cancelUpstream = () -> {
             Disposable disposable = subscriptionRef.get();
@@ -118,7 +170,11 @@ public class ChatService {
                     0,
                     0,
                     System.currentTimeMillis() - startedAt,
-                    RequestStatus.ERROR
+                    RequestStatus.ERROR,
+                    prepared.routingReason(),
+                    prepared.routingMode(),
+                    prepared.routingProfile(),
+                    prepared.routingSelectedModel()
             );
             emitter.complete();
         });
@@ -130,6 +186,7 @@ public class ChatService {
                         chunk -> {
                             try {
                                 if (!chunk.done() && chunk.content() != null && !chunk.content().isEmpty()) {
+                                    anyBytes.set(true);
                                     fullContent.append(chunk.content());
                                 }
                                 if (chunk.done()) {
@@ -150,7 +207,11 @@ public class ChatService {
                                     0,
                                     0,
                                     System.currentTimeMillis() - startedAt,
-                                    RequestStatus.ERROR
+                                    RequestStatus.ERROR,
+                                    prepared.routingReason(),
+                                    prepared.routingMode(),
+                                    prepared.routingProfile(),
+                                    prepared.routingSelectedModel()
                             );
                             emitter.completeWithError(error);
                         },
@@ -185,7 +246,11 @@ public class ChatService {
                                         0,
                                         0,
                                         System.currentTimeMillis() - startedAt,
-                                        RequestStatus.ERROR
+                                        RequestStatus.ERROR,
+                                        prepared.routingReason(),
+                                        prepared.routingMode(),
+                                        prepared.routingProfile(),
+                                        prepared.routingSelectedModel()
                                 );
                                 emitter.completeWithError(ex);
                             }
@@ -209,7 +274,54 @@ public class ChatService {
             );
         }
 
-        Model model = modelService.resolveActiveModel(userChatRequest.getModel());
+        boolean explicitModel = userChatRequest.getModel() != null && !userChatRequest.getModel().isBlank();
+        RoutingProperties routingCfg = routingService.effectiveConfig();
+        RoutingDecision decision = null;
+        Model model;
+        String routingReason;
+        String routingMode = null;
+        String routingProfile = null;
+        String routingSelectedModel = null;
+
+        if (explicitModel || !routingCfg.isEnabled()) {
+            model = modelService.resolveActiveModel(userChatRequest.getModel());
+            routingReason = explicitModel ? "explicit" : "routing_disabled";
+        } else {
+            int promptChars = content.length();
+            if (userChatRequest.getConversationId() != null) {
+                try {
+                    List<Message> existing = messageService.getMessagesByConversationId(
+                            userId, userChatRequest.getConversationId());
+                    for (Message m : existing) {
+                        if (m.getContent() != null) {
+                            promptChars += m.getContent().length();
+                        }
+                    }
+                } catch (RuntimeException ignored) {
+                    // conversation may not exist yet / not owned — use content only
+                }
+            }
+            decision = routingService.decide(userId, promptChars, streaming);
+            routingMode = decision.mode().name();
+            routingProfile = decision.profile().name();
+            routingSelectedModel = decision.selectedModelName();
+
+            boolean useWinner = decision.mode() == RoutingProperties.Mode.ACTIVE && decision.hasWinner();
+            if (useWinner) {
+                Model winner = routingService.resolveModelEntity(decision.selectedModelName());
+                model = winner != null ? winner : modelService.resolveActiveModel(null);
+                routingReason = winner != null ? "active_winner" : "active_fallback_default";
+            } else {
+                model = modelService.resolveActiveModel(null);
+                routingReason = "shadow_default";
+            }
+
+            boolean diverged = decision.hasWinner()
+                    && decision.selectedModelName() != null
+                    && !decision.selectedModelName().equals(model.getName());
+            routingService.persistAndMeter(decision, userId, model.getName(), diverged);
+        }
+
         ensureAdapterAvailable(model, streaming);
 
         Conversation conversation = getOrCreateConversation(userId, userChatRequest.getConversationId());
@@ -220,7 +332,49 @@ public class ChatService {
         List<Message> messages = messageService.getMessagesByConversationId(userId, conversation.getId());
         List<ChatMessage> chatMessages = fitToContextBudget(messages);
         ChatRequest request = new ChatRequest(model.getName(), chatMessages);
-        return new PreparedChat(model, conversation, request);
+        return new PreparedChat(
+                model,
+                conversation,
+                request,
+                decision,
+                routingReason,
+                routingMode,
+                routingProfile,
+                routingSelectedModel
+        );
+    }
+
+    private List<Model> buildTryOrder(PreparedChat prepared) {
+        RoutingProperties cfg = routingService.effectiveConfig();
+        if (prepared.decision() == null
+                || cfg.getMode() != RoutingProperties.Mode.ACTIVE
+                || !"active_winner".equals(prepared.routingReason())) {
+            return List.of(prepared.model());
+        }
+        List<Model> ranked = routingService.rankedModels(prepared.decision());
+        if (ranked.isEmpty()) {
+            return List.of(prepared.model());
+        }
+        // Ensure current model is first if present
+        List<Model> order = new ArrayList<>();
+        order.add(prepared.model());
+        for (Model m : ranked) {
+            if (!m.getId().equals(prepared.model().getId())) {
+                order.add(m);
+            }
+        }
+        return order;
+    }
+
+    private static void sleepQuietly(long ms) {
+        if (ms <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** Avant persistence du message user et avant tout SseEmitter. */
@@ -247,7 +401,11 @@ public class ChatService {
                 response.promptTokens(),
                 response.completionTokens(),
                 latencyMs,
-                RequestStatus.SUCCESS
+                RequestStatus.SUCCESS,
+                prepared.routingReason(),
+                prepared.routingMode(),
+                prepared.routingProfile(),
+                prepared.routingSelectedModel()
         );
         usageGuardService.recordSuccess(
                 userId,
@@ -258,7 +416,30 @@ public class ChatService {
         );
     }
 
-    private record PreparedChat(Model model, Conversation conversation, ChatRequest request) {}
+    private record PreparedChat(
+            Model model,
+            Conversation conversation,
+            ChatRequest request,
+            RoutingDecision decision,
+            String routingReason,
+            String routingMode,
+            String routingProfile,
+            String routingSelectedModel
+    ) {
+        PreparedChat withModel(Model next, ChatRequest nextRequest) {
+            return new PreparedChat(
+                    next, conversation, nextRequest, decision,
+                    routingReason, routingMode, routingProfile, routingSelectedModel
+            );
+        }
+
+        PreparedChat withRoutingReason(String reason) {
+            return new PreparedChat(
+                    model, conversation, request, decision,
+                    reason, routingMode, routingProfile, routingSelectedModel
+            );
+        }
+    }
 
     public Conversation getOrCreateConversation(Long userId, Long conversationId) {
         if (conversationId != null) {

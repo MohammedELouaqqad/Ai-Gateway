@@ -14,6 +14,7 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React) avec chat syn
 | Usage (`/usage`) | Journal paginé (PostgreSQL), filtres, tendances, p50/p95/p99, export CSV |
 | Observability (`/observability`) | ADMIN — fiabilité / latence (p50/p95), liens Grafana & Prometheus |
 | Rate limiting (`/rate-limiting`) | ADMIN — config + état vitesse (req/min, req/jour) et budget (€) |
+| Routing (`/routing`) | ADMIN — sélection auto (Filter→Score), mode **SHADOW** par défaut, simulateur |
 | Santé système (`/admin/health`) | ADMIN — Gateway, Postgres, Prometheus + conso par utilisateur |
 | Prompt templates | CRUD + insert chat (`{{content}}`) |
 | Auth | Keycloak JWT (Resource Server) — find-or-create user via `sub` |
@@ -57,6 +58,22 @@ Ouvrir http://localhost:5173
 docker compose --profile stack up --build -d
 ```
 
+### Mode DEV — live reload (recommandé pour coder)
+
+Volumes + Vite HMR + Spring DevTools (recompile auto) :
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile stack up --build
+```
+
+| Zone | Comportement |
+|------|----------------|
+| `frontend/src`, `style.css` | HMR immédiat dans le navigateur |
+| `backend/src` (Java / resources) | Recompile (~2 s) puis restart Spring |
+| `pom.xml` / deps npm | Rebuild image concernée |
+
+Sans le fichier `docker-compose.dev.yml`, les images sont **figées** (il faut `--build` à chaque change).
+
 | Service    | URL |
 |------------|-----|
 | Frontend   | http://localhost:5173 |
@@ -72,7 +89,7 @@ Prod-like (seed off, logs quiet) :
 SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stack up --build -d
 ```
 
-**Note prod réelle :** Compose convient pour un serveur unique / démo. Pour une prod HA, préférer Kubernetes ou un IdP managé ; Keycloak devrait alors tourner en mode `start` (pas `start-dev`) avec sa propre base Postgres.
+**Note prod réelle :** Compose convient pour un serveur unique / démo. Pour une prod HA, préférer Kubernetes ou un IdP managé ; Keycloak tourne déjà sur Postgres (`base keycloak`, même instance que l’app) — en prod utiliser `start` (pas `start-dev`) + HA.
 ## Premier test
 
 1. **Ollama** → `ollama pull llama3.2:1b` (le seed peut déjà activer le modèle en BDD)
@@ -115,7 +132,22 @@ SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stac
 | GET | `/api/usage/export/csv?…` | Export CSV (streaming réponse) |
 | GET/PUT | `/api/admin/guardrails/config` | Limites rate/budget (**ADMIN**) |
 | GET | `/api/admin/guardrails/status` | Consommation vs plafonds (**ADMIN**) |
+| GET/PUT | `/api/admin/routing/config` | Mode SHADOW/ACTIVE, profil, retries (**ADMIN**) |
+| POST | `/api/admin/routing/simulate` | Dry-run Filter→Score (pas de LLM) (**ADMIN**) |
+| GET | `/api/admin/routing/shadow-stats` | Agrégats divergence / coût (**ADMIN**) |
 | GET/POST | `/api/prompt-templates` | Templates |
+
+### Routing intelligent (v1)
+
+Quand le chat envoie **sans modèle** (`Auto`), le gateway décide via :
+
+1. **Filtre dur** (élimination) : provider off, budget insuffisant, contexte trop petit, pas d’adaptateur  
+2. **Score soft** (profils ECONOMY / QUALITY / SPEED / BALANCED)  
+3. Listes `eliminated` + `ranked` (fallback uniquement sur `ranked`)
+
+**SHADOW** (défaut) : calcule + logue, utilise encore le modèle default.  
+**ACTIVE** : utilise le gagnant. Config : `application-routing.yml`.  
+Chat : sélecteur **Auto (routing)**.
 
 ### Garde-fous LLM (rate limit + budget)
 
@@ -170,11 +202,23 @@ docker compose up -d prometheus grafana
 
 Keycloak est démarré par Compose (profil `stack`) sur le port **8180**.
 
+**Persistance :** une seule instance Postgres (`database`), volume Docker `db-data` → `/var/lib/postgresql/data`.
+Deux bases sur ce serveur (recommandé — ne pas mélanger les schémas Keycloak et app) :
+
+| Base | Usage |
+|------|--------|
+| `Ai_Gateway_DB` | Backend Spring |
+| `keycloak` | Keycloak (user `keycloak` / `keycloak`) |
+
 1. Ouvrir http://localhost:8180 → login `admin` / `admin`.
-2. Créer le realm `Ai-Gateway`, client public `Ai-Gateway-frontend` (Direct Access Grants pour le login dev).
+2. Créer le realm `Ai-Gateway`, client public `Ai-Gateway-frontend` :
+   - **Standard flow** ON, **Direct access grants** OFF (recommandé)
+   - Valid redirect URIs : `http://localhost:5173/auth/callback`
+   - Valid post logout redirect URIs : `http://localhost:5173/*`
+   - Web origins : `http://localhost:5173`
 3. Créer les rôles realm `USER`, `DEVELOPER`, `ADMIN` et un utilisateur de test.
 4. Backend : `iss` JWT = `http://localhost:8180/realms/Ai-Gateway` ; JWKS récupéré en interne via `http://keycloak:8080/.../certs`.
-5. Front : `/login` → password grant (proxy Vite `/realms`) → `Authorization: Bearer` sur `/api/**`.
+5. Front : redirect vers **page login Keycloak** (Authorization Code + PKCE) → callback `/auth/callback` → `Authorization: Bearer` sur `/api/**`.
 6. Chaque user Keycloak est synchronisé en BDD (`users.keycloak_id` = claim `sub`).
 7. Les **rôles** viennent de Keycloak (`realm_access.roles`) et sont mappés en `ROLE_*` côté Spring.
 
@@ -192,7 +236,7 @@ Assignez au moins `USER` (ou `ADMIN`) à chaque compte. Sans `ADMIN`, les bouton
 # Sans token → 401
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/models
 
-# Avec token
+# Token CLI (optionnel — Direct access grants ON) :
 TOKEN=$(curl -s -X POST 'http://localhost:8180/realms/Ai-Gateway/protocol/openid-connect/token' \
   -d 'grant_type=password&client_id=Ai-Gateway-frontend&username=user1&password=...' \
   | jq -r .access_token)
@@ -210,9 +254,16 @@ curl -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8080/api/provider
 cd backend && ./mvnw test
 ```
 
+## Swagger / OpenAPI
+
+UI : http://localhost:8080/swagger-ui.html  
+Spec JSON : http://localhost:8080/v3/api-docs  
+
+Dans Swagger → **Authorize** → coller un JWT Keycloak (`Bearer` automatique).  
+Les routes `/api/**` restent protégées ; seule la doc UI est publique.
+
 ## Roadmap (non livré)
 
 - API Keys gateway
 - Adaptateurs stream vLLM / SGLang
 - Pricing éditable admin (persisté BDD ; runtime UI existe déjà)
-- OIDC Authorization Code + PKCE (remplacer password grant)

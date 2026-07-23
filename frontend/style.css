@@ -3237,3 +3237,7 @@ textarea:focus-visible {
 }
 .muted { color: var(--text-muted); font-size: 0.9rem; }
 
+.table-row--highlight td {
+  background: color-mix(in srgb, var(--accent, #2563eb) 12%, transparent);
+}
+

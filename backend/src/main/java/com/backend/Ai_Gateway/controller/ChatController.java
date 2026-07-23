@@ -37,7 +37,10 @@ public class ChatController {
      * Chat streaming SSE — chaque event {@code chunk} contient un {@code ChatChunk}.
      * Le mode {@code POST /api/chat} (JSON) reste disponible pour {@code stream:false}.
      */
-    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @PostMapping(
+            value = "/stream",
+            produces = {MediaType.TEXT_EVENT_STREAM_VALUE, MediaType.APPLICATION_JSON_VALUE}
+    )
     public SseEmitter createChatStream(
             @Valid @RequestBody UserChatRequest userChatRequest,
             HttpServletResponse response

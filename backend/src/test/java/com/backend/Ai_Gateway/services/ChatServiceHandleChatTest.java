@@ -13,6 +13,8 @@ import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.repositories.ConversationRepository;
 import com.backend.Ai_Gateway.repositories.UserRepository;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
+import com.backend.Ai_Gateway.services.routing.RoutingService;
+import com.backend.Ai_Gateway.config.RoutingProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -43,11 +46,13 @@ class ChatServiceHandleChatTest {
     @Mock UsageService usageService;
     @Mock UsageGuardService usageGuardService;
     @Mock LLMProviderRouter llmProviderRouter;
+    @Mock RoutingService routingService;
 
     private ChatService chatService;
 
     @BeforeEach
     void setUp() {
+        lenient().when(routingService.effectiveConfig()).thenReturn(new RoutingProperties());
         chatService = new ChatService(
                 conversationRepository,
                 userRepository,
@@ -56,7 +61,8 @@ class ChatServiceHandleChatTest {
                 modelService,
                 usageService,
                 usageGuardService,
-                llmProviderRouter
+                llmProviderRouter,
+                routingService
         );
     }
 
@@ -94,7 +100,9 @@ class ChatServiceHandleChatTest {
         assertEquals("bonjour", response.content());
         verify(messageService).createUserMessage("hello", 30L, 1L);
         verify(messageService).createAssistantMessage("bonjour", 30L, 1L, model);
-        verify(usageService).logChatUsage(eq(1L), eq(20L), eq(3), eq(2), anyLong(), eq(RequestStatus.SUCCESS));
+        verify(usageService).logChatUsage(
+                eq(1L), eq(20L), eq(3), eq(2), anyLong(), eq(RequestStatus.SUCCESS),
+                eq("explicit"), eq(null), eq(null), eq(null));
     }
 
     @Test
@@ -105,7 +113,8 @@ class ChatServiceHandleChatTest {
 
         assertThrows(IllegalArgumentException.class, () -> chatService.handleChat(1L, request));
         verify(llmProviderRouter, never()).chat(any(), any());
-        verify(usageService, never()).logChatUsage(anyLong(), anyLong(), any(), any(), anyLong(), any());
+        verify(usageService, never()).logChatUsage(
+                anyLong(), anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -151,7 +160,9 @@ class ChatServiceHandleChatTest {
         UserChatRequest request = new UserChatRequest(null, "ping", "gpt-4o", false);
 
         assertThrows(RuntimeException.class, () -> chatService.handleChat(1L, request));
-        verify(usageService).logChatUsage(eq(1L), eq(20L), eq(0), eq(0), anyLong(), eq(RequestStatus.ERROR));
+        verify(usageService).logChatUsage(
+                eq(1L), eq(20L), eq(0), eq(0), anyLong(), eq(RequestStatus.ERROR),
+                eq("explicit"), eq(null), eq(null), eq(null));
         verify(messageService, never()).createAssistantMessage(any(), anyLong(), anyLong(), any());
     }
 

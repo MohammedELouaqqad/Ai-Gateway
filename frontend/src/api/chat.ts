@@ -1,4 +1,4 @@
-import { clearAccessToken, withAuthHeaders } from '../auth/session'
+import { clearAccessToken, clearIdToken, withAuthHeaders } from '../auth/session'
 import { ApiError } from './client'
 import type { ChatChunk, ChatRequest, ChatResponse } from './types'
 
@@ -7,8 +7,11 @@ const API_BASE = '/api'
 function handleUnauthorized(status: number): void {
   if (status === 401) {
     clearAccessToken()
-    if (window.location.pathname !== '/login') {
-      window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)
+    clearIdToken()
+    if (!window.location.pathname.startsWith('/auth/callback')) {
+      void import('../auth/keycloak').then((m) =>
+        m.beginLogin(window.location.pathname + window.location.search),
+      )
     }
   }
 }
@@ -39,7 +42,8 @@ export async function sendChatStream(
     method: 'POST',
     headers: withAuthHeaders({
       'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
+      // application/json requis pour afficher les erreurs 429 (garde-fous) en JSON
+      Accept: 'text/event-stream, application/json',
     }),
     body: JSON.stringify({ ...request, stream: true }),
     signal,
@@ -47,11 +51,12 @@ export async function sendChatStream(
 
   if (!response.ok) {
     handleUnauthorized(response.status)
-    let body: unknown
+    const raw = await response.text()
+    let body: unknown = raw
     try {
-      body = await response.json()
+      body = raw.trim() ? JSON.parse(raw) : undefined
     } catch {
-      body = await response.text()
+      /* keep raw text */
     }
     const apiMessage =
       typeof body === 'object' &&
@@ -63,7 +68,9 @@ export async function sendChatStream(
     const detail =
       response.status === 403
         ? apiMessage || 'Accès refusé — droits insuffisants'
-        : apiMessage || `Erreur API ${response.status} sur /chat/stream`
+        : response.status === 429
+          ? apiMessage || 'Limite atteinte — réessayez plus tard'
+          : apiMessage || `Erreur API ${response.status} sur /chat/stream`
     throw new ApiError(detail, response.status, body)
   }
 
@@ -129,11 +136,12 @@ async function fetchJson<T>(path: string, options: RequestInit): Promise<T> {
 
   if (!response.ok) {
     handleUnauthorized(response.status)
-    let body: unknown
+    const raw = await response.text()
+    let body: unknown = raw
     try {
-      body = await response.json()
+      body = raw.trim() ? JSON.parse(raw) : undefined
     } catch {
-      body = await response.text()
+      /* keep raw text */
     }
     const apiMessage =
       typeof body === 'object' &&
@@ -145,7 +153,9 @@ async function fetchJson<T>(path: string, options: RequestInit): Promise<T> {
     const detail =
       response.status === 403
         ? apiMessage || 'Accès refusé — droits insuffisants'
-        : apiMessage || `Erreur API ${response.status} sur ${path}`
+        : response.status === 429
+          ? apiMessage || 'Limite atteinte — réessayez plus tard'
+          : apiMessage || `Erreur API ${response.status} sur ${path}`
     throw new ApiError(detail, response.status, body)
   }
 

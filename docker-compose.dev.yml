@@ -1,0 +1,55 @@
+# Override DEV — hot reload (volumes + Vite HMR + Spring DevTools)
+#
+# Démarrage :
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile stack up --build
+#
+# Front : changements .tsx/.css → HMR immédiat (sans rebuild image)
+# Back  : changements Java/resources → recompile (~2s poll) + restart DevTools
+#
+# Stack “prod-like” (images figées) : sans ce fichier
+#   docker compose --profile stack up --build -d
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/pom.xml:/app/pom.xml:ro
+      - ./backend/docker-entrypoint-dev.sh:/app/docker-entrypoint-dev.sh:ro
+      - backend-m2:/root/.m2
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DEVTOOLS_RESTART_ENABLED: "true"
+      # Polling DevTools (événements FS Docker souvent absents)
+      SPRING_DEVTOOLS_RESTART_POLL_INTERVAL: 2s
+      SPRING_DEVTOOLS_RESTART_QUIET_PERIOD: 1s
+    # Pas de JAR : l’entrypoint lance spring-boot:run
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/style.css:/app/style.css
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      # Conserver node_modules de l’image (ne pas écraser avec l’hôte)
+      - frontend-node-modules:/app/node_modules
+    environment:
+      DOCKER: "true"
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+      HMR_CLIENT_PORT: "5173"
+      API_PROXY_TARGET: http://backend:8080
+      KEYCLOAK_PROXY_TARGET: http://keycloak:8080
+      KEYCLOAK_PUBLIC_HOST: localhost:8180
+      VITE_GRAFANA_URL: http://localhost:3000
+      VITE_PROMETHEUS_URL: http://localhost:9090
+      PROMETHEUS_PROXY_TARGET: http://prometheus:9090
+
+volumes:
+  backend-m2:
+  frontend-node-modules:

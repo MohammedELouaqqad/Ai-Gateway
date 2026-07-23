@@ -42,17 +42,20 @@ export function ChatPage() {
   const activeModels = models.filter((m) => m.enabled && m.provider?.enabled)
   const selectableModels = activeModels.filter((m) => m.available !== false)
   const selectedModelInfo = activeModels.find((m) => m.name === selectedModel) ?? models.find((m) => m.name === selectedModel)
-  const selectedModelLabel =
-    selectedModelInfo?.displayName
-    ?? selectedModelInfo?.name
-    ?? selectedModel
-  const selectedAvailable = selectedModelInfo?.available !== false
-  const selectedSupportsStreaming = selectedAvailable
-    && selectedModelInfo?.supportsStreaming !== false
-    && (selectedModelInfo?.supportsStreaming === true
-      || selectedModelInfo?.provider?.type === 'OLLAMA'
-      || selectedModelInfo?.provider?.type === 'OPENAI'
-      || selectedModelInfo?.provider?.type === 'AZURE_OPENAI')
+  const isAutoModel = selectedModel === ''
+  const selectedModelLabel = isAutoModel
+    ? chat.modelAuto
+    : (selectedModelInfo?.displayName
+      ?? selectedModelInfo?.name
+      ?? selectedModel)
+  const selectedAvailable = isAutoModel || selectedModelInfo?.available !== false
+  const selectedSupportsStreaming = isAutoModel
+    || (selectedAvailable
+      && selectedModelInfo?.supportsStreaming !== false
+      && (selectedModelInfo?.supportsStreaming === true
+        || selectedModelInfo?.provider?.type === 'OLLAMA'
+        || selectedModelInfo?.provider?.type === 'OPENAI'
+        || selectedModelInfo?.provider?.type === 'AZURE_OPENAI'))
   const headerModelLabel =
     selectedModelLabel
     || activeConversation?.model?.displayName
@@ -60,7 +63,14 @@ export function ChatPage() {
     || ''
   const inputOverLimit = input.length > CONTENT_LIMITS.CHAT_MESSAGE_MAX
   const inputNearLimit = input.length >= CONTENT_LIMITS.CHAT_MESSAGE_WARN
-  const canSend = !loading && !sending && !!input.trim() && !!selectedModel && selectedAvailable && !inputOverLimit
+  const canSend =
+    !loading
+    && !sending
+    && !!input.trim()
+    && (isAutoModel || !!selectedModel)
+    && selectedAvailable
+    && selectableModels.length > 0
+    && !inputOverLimit
   const canApplyTemplate = !sending && !!selectedTemplateId
 
   function assistantModelLabel(message: ApiMessage): string | null {
@@ -222,7 +232,7 @@ export function ChatPage() {
 
   async function handleSend() {
     const content = input.trim()
-    if (!content || sending || !selectedModel) return
+    if (!content || sending || (!isAutoModel && !selectedModel)) return
 
     if (content.length > CONTENT_LIMITS.CHAT_MESSAGE_MAX) {
       setError(
@@ -258,7 +268,7 @@ export function ChatPage() {
         {
           conversationId: activeConversationId,
           content,
-          model: selectedModel,
+          model: selectedModel || undefined,
           stream: true,
         },
         {
@@ -449,6 +459,7 @@ export function ChatPage() {
                 onChange={(e) => setSelectedModel(e.target.value)}
                 disabled={selectableModels.length === 0}
               >
+                <option value="">{chat.modelAuto}</option>
                 {activeModels.map((m) => {
                   const unavailable = m.available === false
                   return (
@@ -593,8 +604,10 @@ export function ChatPage() {
                   aria-label={common.send}
                   disabled={!canSend}
                   title={
-                    !selectedModel || selectableModels.length === 0
+                    !selectedModel && selectableModels.length === 0
                       ? chat.sendNeedModel
+                      : selectableModels.length === 0
+                        ? chat.sendNeedModel
                       : !selectedAvailable
                         ? chat.sendUnavailable
                         : inputOverLimit

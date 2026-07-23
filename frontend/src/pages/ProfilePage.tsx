@@ -7,7 +7,7 @@ import { Badge } from '../components/Badge'
 import { apiFetch } from '../api/client'
 import { fetchConversations } from '../api/conversations'
 import { fetchModels } from '../api/models'
-import { clearAccessToken } from '../auth/session'
+import { logout } from '../auth/keycloak'
 import { useI18n } from '../i18n'
 import { isModelDefault } from '../utils/mappers'
 
@@ -62,8 +62,7 @@ export function ProfilePage() {
   }, [])
 
   function onLogout() {
-    clearAccessToken()
-    window.location.assign('/login')
+    logout()
   }
 
   async function copyKeycloakId() {

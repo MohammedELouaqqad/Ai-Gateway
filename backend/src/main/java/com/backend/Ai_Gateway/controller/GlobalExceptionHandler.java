@@ -8,9 +8,11 @@ import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -71,7 +73,26 @@ public class GlobalExceptionHandler {
                 ex.getReason().metricLabel(),
                 ex.getResetsAt()
         );
-        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(body);
+        // Force JSON even when client Accept is only text/event-stream (chat SSE)
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body);
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+    public ResponseEntity<ApiErrorResponse> handleNotAcceptable(
+            HttpMediaTypeNotAcceptableException ex,
+            HttpServletRequest request
+    ) {
+        return ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new ApiErrorResponse(
+                        Instant.now(),
+                        HttpStatus.NOT_ACCEPTABLE.value(),
+                        HttpStatus.NOT_ACCEPTABLE.getReasonPhrase(),
+                        "Type de réponse non acceptable",
+                        request.getRequestURI()
+                ));
     }
 
     @ExceptionHandler(ProviderNotImplementedException.class)
@@ -100,6 +121,8 @@ public class GlobalExceptionHandler {
                 message,
                 request.getRequestURI()
         );
-        return ResponseEntity.status(status).body(body);
+        return ResponseEntity.status(status)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body);
     }
 }

@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import { RequireAuth, RequireRole, AccessDeniedPage } from './auth/RequireAuth'
+import { AuthCallbackPage } from './pages/AuthCallbackPage'
 import { ChatPage } from './pages/ChatPage'
-import { LoginPage } from './pages/LoginPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { DashboardPage } from './pages/DashboardPage'
 import { ConversationsPage } from './pages/ConversationsPage'
@@ -34,7 +34,7 @@ function AdminOnly({ children }: { children: ReactNode }) {
 export default function App() {
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/auth/callback" element={<AuthCallbackPage />} />
       <Route path="/access-denied" element={<AccessDeniedPage />} />
 
       <Route path="/" element={<Authed><ChatPage /></Authed>} />
