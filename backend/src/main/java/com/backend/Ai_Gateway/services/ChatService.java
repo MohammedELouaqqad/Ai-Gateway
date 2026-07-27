@@ -20,6 +20,7 @@ import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.repositories.ConversationRepository;
 import com.backend.Ai_Gateway.repositories.UserRepository;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
+import com.backend.Ai_Gateway.services.guardrails.GuardAdmission;
 import com.backend.Ai_Gateway.services.routing.ProviderFailureAction;
 import com.backend.Ai_Gateway.services.routing.ProviderFailureClassifier;
 import com.backend.Ai_Gateway.services.routing.RoutingDecision;
@@ -76,67 +77,82 @@ public class ChatService {
 
     public ChatResponse handleChat(Long userId, UserChatRequest userChatRequest) {
         PreparedChat prepared = prepareChat(userId, userChatRequest, false);
-        usageGuardService.assertAllowed(userId, prepared.model(), prepared.request().messages());
+        GuardAdmission admission = usageGuardService.assertAllowed(
+                userId, prepared.model(), prepared.request().messages());
         long startedAt = System.currentTimeMillis();
 
         List<Model> tryOrder = buildTryOrder(prepared);
         RuntimeException lastError = null;
+        boolean budgetSettled = false;
 
-        for (int i = 0; i < tryOrder.size(); i++) {
-            Model candidate = tryOrder.get(i);
-            ChatRequest request = new ChatRequest(candidate.getName(), prepared.request().messages());
-            int maxRetries = routingService.effectiveConfig().getMaxRetries();
-            long backoff = routingService.effectiveConfig().getRetryBackoffMs();
+        try {
+            for (int i = 0; i < tryOrder.size(); i++) {
+                Model candidate = tryOrder.get(i);
+                ChatRequest request = new ChatRequest(candidate.getName(), prepared.request().messages());
+                int maxRetries = routingService.effectiveConfig().getMaxRetries();
+                long backoff = routingService.effectiveConfig().getRetryBackoffMs();
 
-            for (int attempt = 0; attempt <= maxRetries; attempt++) {
-                try {
-                    ChatResponse response = llmProviderRouter.chat(candidate.getProvider(), request);
-                    PreparedChat used = prepared.withModel(candidate, request);
-                    if (i > 0) {
-                        routingService.meterFallback("fallback_after_failure");
-                        used = used.withRoutingReason("fallback:" + (lastError != null
-                                ? lastError.getClass().getSimpleName()
-                                : "error"));
+                for (int attempt = 0; attempt <= maxRetries; attempt++) {
+                    try {
+                        ChatResponse response = llmProviderRouter.chat(candidate.getProvider(), request);
+                        PreparedChat used = prepared.withModel(candidate, request);
+                        if (i > 0) {
+                            routingService.meterFallback("fallback_after_failure");
+                            used = used.withRoutingReason("fallback:" + (lastError != null
+                                    ? lastError.getClass().getSimpleName()
+                                    : "error"));
+                        }
+                        attachModelToConversation(used.conversation(), candidate);
+                        usageGuardService.confirmBudgetReservation(
+                                admission.budgetReservation(),
+                                candidate,
+                                response.promptTokens() != null ? response.promptTokens() : 0,
+                                response.completionTokens() != null ? response.completionTokens() : 0
+                        );
+                        budgetSettled = true;
+                        persistSuccess(userId, used, response, System.currentTimeMillis() - startedAt);
+                        return response;
+                    } catch (RuntimeException ex) {
+                        lastError = ex;
+                        ProviderFailureAction action = ProviderFailureClassifier.classify(ex, false);
+                        if (action == ProviderFailureAction.RETRY_SAME && attempt < maxRetries) {
+                            sleepQuietly(backoff * (attempt + 1));
+                            continue;
+                        }
+                        if (action == ProviderFailureAction.FALLBACK_NEXT && i + 1 < tryOrder.size()) {
+                            routingService.meterFallback(ProviderFailureClassifier.reasonLabel(action, ex));
+                            break;
+                        }
+                        if (action == ProviderFailureAction.RETRY_SAME && i + 1 < tryOrder.size()) {
+                            routingService.meterFallback(ProviderFailureClassifier.reasonLabel(action, ex));
+                            break;
+                        }
+                        usageService.logChatUsage(
+                                userId,
+                                candidate.getId(),
+                                0,
+                                0,
+                                System.currentTimeMillis() - startedAt,
+                                RequestStatus.ERROR,
+                                prepared.routingReason(),
+                                prepared.routingMode(),
+                                prepared.routingProfile(),
+                                prepared.routingSelectedModel()
+                        );
+                        throw ex;
                     }
-                    attachModelToConversation(used.conversation(), candidate);
-                    persistSuccess(userId, used, response, System.currentTimeMillis() - startedAt);
-                    return response;
-                } catch (RuntimeException ex) {
-                    lastError = ex;
-                    ProviderFailureAction action = ProviderFailureClassifier.classify(ex, false);
-                    if (action == ProviderFailureAction.RETRY_SAME && attempt < maxRetries) {
-                        sleepQuietly(backoff * (attempt + 1));
-                        continue;
-                    }
-                    if (action == ProviderFailureAction.FALLBACK_NEXT && i + 1 < tryOrder.size()) {
-                        routingService.meterFallback(ProviderFailureClassifier.reasonLabel(action, ex));
-                        break;
-                    }
-                    if (action == ProviderFailureAction.RETRY_SAME && i + 1 < tryOrder.size()) {
-                        routingService.meterFallback(ProviderFailureClassifier.reasonLabel(action, ex));
-                        break;
-                    }
-                    usageService.logChatUsage(
-                            userId,
-                            candidate.getId(),
-                            0,
-                            0,
-                            System.currentTimeMillis() - startedAt,
-                            RequestStatus.ERROR,
-                            prepared.routingReason(),
-                            prepared.routingMode(),
-                            prepared.routingProfile(),
-                            prepared.routingSelectedModel()
-                    );
-                    throw ex;
                 }
             }
-        }
 
-        if (lastError != null) {
-            throw lastError;
+            if (lastError != null) {
+                throw lastError;
+            }
+            throw new IllegalStateException("No routable model available");
+        } finally {
+            if (!budgetSettled) {
+                usageGuardService.releaseBudgetReservation(admission.budgetReservation());
+            }
         }
-        throw new IllegalStateException("No routable model available");
     }
 
     /**
@@ -145,7 +161,8 @@ public class ChatService {
      */
     public SseEmitter handleChatStream(Long userId, UserChatRequest userChatRequest) {
         PreparedChat prepared = prepareChat(userId, userChatRequest, true);
-        usageGuardService.assertAllowed(userId, prepared.model(), prepared.request().messages());
+        GuardAdmission admission = usageGuardService.assertAllowed(
+                userId, prepared.model(), prepared.request().messages());
         long startedAt = System.currentTimeMillis();
 
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
@@ -153,6 +170,13 @@ public class ChatService {
         AtomicReference<ChatChunk> lastDoneChunk = new AtomicReference<>();
         AtomicReference<Disposable> subscriptionRef = new AtomicReference<>();
         AtomicBoolean anyBytes = new AtomicBoolean(false);
+        AtomicBoolean budgetDone = new AtomicBoolean(false);
+
+        Runnable releaseBudgetIfNeeded = () -> {
+            if (budgetDone.compareAndSet(false, true)) {
+                usageGuardService.releaseBudgetReservation(admission.budgetReservation());
+            }
+        };
 
         Runnable cancelUpstream = () -> {
             Disposable disposable = subscriptionRef.get();
@@ -164,6 +188,7 @@ public class ChatService {
         emitter.onCompletion(cancelUpstream);
         emitter.onTimeout(() -> {
             cancelUpstream.run();
+            releaseBudgetIfNeeded.run();
             usageService.logChatUsage(
                     userId,
                     prepared.model().getId(),
@@ -178,7 +203,10 @@ public class ChatService {
             );
             emitter.complete();
         });
-        emitter.onError(ex -> cancelUpstream.run());
+        emitter.onError(ex -> {
+            cancelUpstream.run();
+            releaseBudgetIfNeeded.run();
+        });
 
         var provider = prepared.model().getProvider();
         Disposable subscription = llmProviderRouter.stream(provider, prepared.request())
@@ -201,6 +229,7 @@ public class ChatService {
                             }
                         },
                         error -> {
+                            releaseBudgetIfNeeded.run();
                             usageService.logChatUsage(
                                     userId,
                                     prepared.model().getId(),
@@ -228,6 +257,13 @@ public class ChatService {
                                         promptTokens,
                                         completionTokens
                                 );
+                                usageGuardService.confirmBudgetReservation(
+                                        admission.budgetReservation(),
+                                        prepared.model(),
+                                        promptTokens != null ? promptTokens : 0,
+                                        completionTokens != null ? completionTokens : 0
+                                );
+                                budgetDone.set(true);
                                 persistSuccess(userId, prepared, response, System.currentTimeMillis() - startedAt);
 
                                 if (done == null) {
@@ -240,6 +276,7 @@ public class ChatService {
                                 }
                                 emitter.complete();
                             } catch (Exception ex) {
+                                releaseBudgetIfNeeded.run();
                                 usageService.logChatUsage(
                                         userId,
                                         prepared.model().getId(),

@@ -14,6 +14,7 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React) avec chat syn
 | Usage (`/usage`) | Journal paginé (PostgreSQL), filtres, tendances, p50/p95/p99, export CSV |
 | Observability (`/observability`) | ADMIN — fiabilité / latence (p50/p95), liens Grafana & Prometheus |
 | Rate limiting (`/rate-limiting`) | ADMIN — config + état vitesse (req/min, req/jour) et budget (€) |
+| Redis garde-fous | RPM/RPD/budget partagés (opt-in `APP_REDIS_ENABLED`) — Postgres = vérité |
 | Routing (`/routing`) | ADMIN — sélection auto (Filter→Score), mode **SHADOW** par défaut, simulateur |
 | Santé système (`/admin/health`) | ADMIN — Gateway, Postgres, Prometheus + conso par utilisateur |
 | Prompt templates | CRUD + insert chat (`{{content}}`) |
@@ -162,6 +163,16 @@ Config : `application-guardrails.yml` (prix EUR / 1K tokens).
 HTTP **429** + champs `reason` / `resetsAt`.  
 Métriques : `ai_gateway_tokens_total`, `ai_gateway_cost_eur_total`, `ai_gateway_requests_blocked_total`, `ai_gateway_llm_latency`, `ai_gateway_budget_global_ratio`.  
 Test : `scripts/test-guardrails.sh`.
+
+#### Redis (opt-in) — RPM / RPD / budget partagés
+
+- Compose : service `redis:7-alpine`, `noeviction`, password `${REDIS_PASSWORD:-changeme}`  
+- Activation stack : `APP_REDIS_ENABLED=true` (déjà dans Compose backend)  
+- Local sans Redis : `APP_REDIS_ENABLED=false` → stores **in-memory** (comportement historique)  
+- Scripts Lua : `backend/src/main/resources/redis/*.lua`  
+- **D1** budget block ≠ consommer RPM/RPD · **D2** RPD = tentative acceptée · **D3** pas d’idempotence requestId en v1  
+- Redis down : RPM/RPD `fail-open` configurable (défaut **false** → 429) ; budget → fallback `SUM` Postgres  
+- Job réconciliation budget global toutes les ~5 min (orphelins après crash pod)
 
 ### Exemple stream
 

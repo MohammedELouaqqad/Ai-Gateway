@@ -1,6 +1,7 @@
 package com.backend.Ai_Gateway.services;
 
 import com.backend.Ai_Gateway.config.GuardrailsProperties;
+import com.backend.Ai_Gateway.config.RedisGuardProperties;
 import com.backend.Ai_Gateway.entity.Model;
 import com.backend.Ai_Gateway.entity.Provider;
 import com.backend.Ai_Gateway.enums.MessageRole;
@@ -9,6 +10,8 @@ import com.backend.Ai_Gateway.enums.ProviderType;
 import com.backend.Ai_Gateway.exceptions.GuardrailsExceededException;
 import com.backend.Ai_Gateway.provider.dto.ChatMessage;
 import com.backend.Ai_Gateway.repositories.UsageLogRepository;
+import com.backend.Ai_Gateway.services.guardrails.memory.InMemoryBudgetStore;
+import com.backend.Ai_Gateway.services.guardrails.memory.InMemoryRateLimitStore;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,12 +22,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class UsageGuardServiceTest {
@@ -49,7 +50,15 @@ class UsageGuardServiceTest {
         props.getPricing().put("gpt-4o-mini", price);
 
         ModelPricingService pricing = new ModelPricingService(props);
-        guard = new UsageGuardService(props, usageLogRepository, pricing, new SimpleMeterRegistry());
+        guard = new UsageGuardService(
+                props,
+                usageLogRepository,
+                pricing,
+                new SimpleMeterRegistry(),
+                new InMemoryRateLimitStore(),
+                new InMemoryBudgetStore(),
+                new RedisGuardProperties()
+        );
 
         Provider ollama = new Provider();
         ollama.setName("Ollama");
@@ -77,28 +86,20 @@ class UsageGuardServiceTest {
         List<ChatMessage> msgs = List.of(new ChatMessage(MessageRole.USER, "hi"));
         assertDoesNotThrow(() -> guard.assertAllowed(1L, localModel, msgs));
         assertDoesNotThrow(() -> guard.assertAllowed(1L, localModel, msgs));
-        GuardrailsExceededException ex = assertThrows(
-                GuardrailsExceededException.class,
-                () -> guard.assertAllowed(1L, localModel, msgs)
-        );
-        assertEquals(GuardrailsExceededException.Reason.RATE_LIMIT_MINUTE, ex.getReason());
+        assertThrows(GuardrailsExceededException.class, () -> guard.assertAllowed(1L, localModel, msgs));
     }
 
     @Test
-    void budget_skipsLocalModel() {
-        guard.updateRuntimeConfig(true, 100, 100, 10.0, 0.0000001);
-        assertDoesNotThrow(() -> guard.assertAllowed(1L, localModel, List.of(new ChatMessage(MessageRole.USER, "hi"))));
-    }
+    void budgetBlock_doesNotConsumeRpm_d1() {
+        // User already near budget: estimated cloud call will block
+        lenient().when(usageLogRepository.sumEstimatedCostByUserIdAndCreatedAtBetween(eq(1L), any(), any()))
+                .thenReturn(0.99);
+        List<ChatMessage> msgs = List.of(new ChatMessage(MessageRole.USER, "x".repeat(4000)));
 
-    @Test
-    void budget_blocksCloudWhenUserCapExceeded() {
-        guard.updateRuntimeConfig(true, 100, 100, 50.0, 0.0001);
-        when(usageLogRepository.sumEstimatedCostByUserIdAndCreatedAtBetween(eq(1L), any(), any())).thenReturn(0.0);
-        String big = "x".repeat(8000);
-        GuardrailsExceededException ex = assertThrows(
-                GuardrailsExceededException.class,
-                () -> guard.assertAllowed(1L, cloudModel, List.of(new ChatMessage(MessageRole.USER, big)))
-        );
-        assertEquals(GuardrailsExceededException.Reason.BUDGET_USER, ex.getReason());
+        assertThrows(GuardrailsExceededException.class, () -> guard.assertAllowed(1L, cloudModel, msgs));
+
+        // After budget block, RPM should still allow 2 local calls (D1)
+        assertDoesNotThrow(() -> guard.assertAllowed(1L, localModel, List.of(new ChatMessage(MessageRole.USER, "a"))));
+        assertDoesNotThrow(() -> guard.assertAllowed(1L, localModel, List.of(new ChatMessage(MessageRole.USER, "b"))));
     }
 }

@@ -13,6 +13,7 @@ import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.repositories.ConversationRepository;
 import com.backend.Ai_Gateway.repositories.UserRepository;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
+import com.backend.Ai_Gateway.services.guardrails.GuardAdmission;
 import com.backend.Ai_Gateway.services.routing.RoutingService;
 import com.backend.Ai_Gateway.config.RoutingProperties;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,6 +54,7 @@ class ChatServiceHandleChatTest {
     @BeforeEach
     void setUp() {
         lenient().when(routingService.effectiveConfig()).thenReturn(new RoutingProperties());
+        lenient().when(usageGuardService.assertAllowed(anyLong(), any(), any())).thenReturn(GuardAdmission.empty());
         chatService = new ChatService(
                 conversationRepository,
                 userRepository,

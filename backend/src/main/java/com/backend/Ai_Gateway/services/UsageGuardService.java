@@ -1,36 +1,38 @@
 package com.backend.Ai_Gateway.services;
 
 import com.backend.Ai_Gateway.config.GuardrailsProperties;
+import com.backend.Ai_Gateway.config.RedisGuardProperties;
 import com.backend.Ai_Gateway.entity.Model;
 import com.backend.Ai_Gateway.enums.ProviderLocation;
 import com.backend.Ai_Gateway.exceptions.GuardrailsExceededException;
 import com.backend.Ai_Gateway.exceptions.GuardrailsExceededException.Reason;
 import com.backend.Ai_Gateway.provider.dto.ChatMessage;
 import com.backend.Ai_Gateway.repositories.UsageLogRepository;
+import com.backend.Ai_Gateway.services.guardrails.BudgetReservation;
+import com.backend.Ai_Gateway.services.guardrails.BudgetResult;
+import com.backend.Ai_Gateway.services.guardrails.BudgetStore;
+import com.backend.Ai_Gateway.services.guardrails.GuardAdmission;
+import com.backend.Ai_Gateway.services.guardrails.RateLimitResult;
+import com.backend.Ai_Gateway.services.guardrails.RateLimitStore;
+import com.backend.Ai_Gateway.services.guardrails.StoreOutcome;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import org.springframework.stereotype.Service;
-
 import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Garde-fous au point de passage LLM :
- * 1) rate limit / minute
- * 2) rate limit / jour
- * 3) budget € (user + global) — modèles payants uniquement
+ * Garde-fous LLM : RPM → RPD → Budget (D1: budget block ne consomme pas RPM/RPD).
+ * D2: RPD = tentative acceptée. D3: pas d'idempotence requestId en v1.
  */
 @Service
 public class UsageGuardService {
@@ -40,27 +42,33 @@ public class UsageGuardService {
     private final UsageLogRepository usageLogRepository;
     private final ModelPricingService pricingService;
     private final MeterRegistry meterRegistry;
-
-    /** timestamps ms des tentatives (fenêtre glissante 1 min) */
-    private final ConcurrentHashMap<Long, Deque<Long>> minuteWindows = new ConcurrentHashMap<>();
+    private final RateLimitStore rateLimitStore;
+    private final BudgetStore budgetStore;
+    private final RedisGuardProperties redisProps;
 
     public UsageGuardService(
             GuardrailsProperties defaults,
             UsageLogRepository usageLogRepository,
             ModelPricingService pricingService,
-            MeterRegistry meterRegistry
+            MeterRegistry meterRegistry,
+            RateLimitStore rateLimitStore,
+            BudgetStore budgetStore,
+            RedisGuardProperties redisProps
     ) {
         this.defaults = defaults;
         this.runtime = new AtomicReference<>(copyProps(defaults));
         this.usageLogRepository = usageLogRepository;
         this.pricingService = pricingService;
         this.meterRegistry = meterRegistry;
+        this.rateLimitStore = rateLimitStore;
+        this.budgetStore = budgetStore;
+        this.redisProps = redisProps;
     }
 
     @PostConstruct
     void registerBudgetGauges() {
         Gauge.builder("ai_gateway_budget_global_ratio", this, UsageGuardService::globalBudgetRatio)
-                .description("Ratio budget global du jour (0..1+). Alerte Grafana suggérée à 0.8")
+                .description("Ratio budget global du jour (0..1+)")
                 .register(meterRegistry);
     }
 
@@ -112,78 +120,141 @@ public class UsageGuardService {
 
     /**
      * À appeler APRÈS prepareChat, AVANT llmProviderRouter.
+     * @return admission avec réservation budget (à release/confirm)
      */
-    public void assertAllowed(Long userId, Model model, List<ChatMessage> messages) {
+    public GuardAdmission assertAllowed(Long userId, Model model, List<ChatMessage> messages) {
         GuardrailsProperties cfg = effectiveConfig();
         if (!cfg.isEnabled()) {
-            return;
+            return GuardAdmission.empty();
         }
 
-        Instant now = Instant.now();
         Instant dayStart = LocalDate.now(ZoneOffset.UTC).atStartOfDay().toInstant(ZoneOffset.UTC);
         Instant dayEnd = dayStart.plus(1, ChronoUnit.DAYS);
+        String utcDate = LocalDate.now(ZoneOffset.UTC).toString();
+        int rpdTtl = secondsUntilEndOfUtcDayPlusMargin();
+        int budgetTtl = rpdTtl;
 
-        // 1) Rate limit / minute (check only — reserve after all checks pass)
         int rpm = cfg.getRateLimit().getRequestsPerMinute();
-        Deque<Long> window = minuteWindows.computeIfAbsent(userId, id -> new ArrayDeque<>());
-        synchronized (window) {
-            long cutoff = now.toEpochMilli() - 60_000L;
-            while (!window.isEmpty() && window.peekFirst() < cutoff) {
-                window.pollFirst();
-            }
-            if (window.size() >= rpm) {
-                Instant resetsAt = Instant.ofEpochMilli(window.peekFirst() + 60_000L);
-                block(Reason.RATE_LIMIT_MINUTE,
-                        "Limite vitesse : max " + rpm + " requêtes / minute. Réessai après "
-                                + resetsAt + ".",
-                        resetsAt);
-            }
+        int rpd = cfg.getRateLimit().getRequestsPerDay();
+
+        // --- Peek RPM (no consume) ---
+        RateLimitResult rpmPeek = rateLimitStore.peekRpm(userId, rpm);
+        handleRateUnavailable(rpmPeek, Reason.RATE_LIMIT_MINUTE, rpm, dayEnd);
+        if (rpmPeek.outcome() == StoreOutcome.BLOCKED) {
+            block(Reason.RATE_LIMIT_MINUTE,
+                    "Limite vitesse : max " + rpm + " requêtes / minute.",
+                    Instant.now().plusSeconds(60));
         }
 
-        // 2) Rate limit / jour
-        int rpd = cfg.getRateLimit().getRequestsPerDay();
-        long dayCount = usageLogRepository.countByUserIdAndCreatedAtBetween(userId, dayStart, dayEnd);
-        if (dayCount >= rpd) {
+        // --- Peek RPD + bootstrap ---
+        long sqlDayCount = usageLogRepository.countByUserIdAndCreatedAtBetween(userId, dayStart, dayEnd);
+        rateLimitStore.bootstrapRpdIfAbsent(userId, utcDate, sqlDayCount, rpdTtl);
+        RateLimitResult rpdPeek = rateLimitStore.peekRpd(userId, rpd, utcDate);
+        handleRateUnavailable(rpdPeek, Reason.RATE_LIMIT_DAY, rpd, dayEnd);
+        if (rpdPeek.outcome() == StoreOutcome.BLOCKED) {
             block(Reason.RATE_LIMIT_DAY,
                     "Limite équité : max " + rpd + " requêtes / jour / utilisateur. Reset à "
                             + dayEnd + " (UTC).",
                     dayEnd);
         }
 
-        // 3) Budget (modèles payants uniquement)
+        // --- Budget reserve (billable only) BEFORE committing RPM/RPD (D1) ---
+        BudgetReservation reservation = BudgetReservation.none();
         String modelName = model.getName();
+        long estimatedCents = 0;
         if (pricingService.isBillable(modelName)) {
             int promptEst = estimatePromptTokens(messages, cfg.getEstimate().getCharsPerToken());
             int completionEst = cfg.getEstimate().getAssumedCompletionTokens();
-            double estimatedCost = pricingService.calculateCostEur(promptEst, completionEst, modelName);
+            double estimatedEur = pricingService.calculateCostEur(promptEst, completionEst, modelName);
+            estimatedCents = Math.max(1, Math.round(estimatedEur * 100.0));
 
-            double userSpent = usageLogRepository.sumEstimatedCostByUserIdAndCreatedAtBetween(userId, dayStart, dayEnd);
-            double userCap = cfg.getBudget().getUserPerDayEur();
-            if (userSpent + estimatedCost > userCap) {
-                block(Reason.BUDGET_USER,
-                        String.format(
-                                "Budget utilisateur : %.4f € déjà dépensés + ~%.4f € estimés > plafond %.2f € / jour. Reset à %s (UTC).",
-                                userSpent, estimatedCost, userCap, dayEnd
-                        ),
-                        dayEnd);
-            }
+            long sqlUserCents = Math.round(
+                    usageLogRepository.sumEstimatedCostByUserIdAndCreatedAtBetween(userId, dayStart, dayEnd) * 100.0);
+            long sqlGlobalCents = Math.round(
+                    usageLogRepository.sumEstimatedCostBetween(dayStart, dayEnd) * 100.0);
+            long userCapCents = Math.round(cfg.getBudget().getUserPerDayEur() * 100.0);
+            long globalCapCents = Math.round(cfg.getBudget().getGlobalPerDayEur() * 100.0);
 
-            double globalSpent = usageLogRepository.sumEstimatedCostBetween(dayStart, dayEnd);
-            double globalCap = cfg.getBudget().getGlobalPerDayEur();
-            if (globalSpent + estimatedCost > globalCap) {
-                block(Reason.BUDGET_GLOBAL,
-                        String.format(
-                                "Budget global : %.4f € déjà dépensés + ~%.4f € estimés > plafond %.2f € / jour. Reset à %s (UTC).",
-                                globalSpent, estimatedCost, globalCap, dayEnd
-                        ),
-                        dayEnd);
+            BudgetResult budgetResult = budgetStore.tryReserve(
+                    userId, utcDate, estimatedCents, userCapCents, globalCapCents, budgetTtl,
+                    sqlUserCents, sqlGlobalCents
+            );
+
+            if (budgetResult.outcome() == StoreOutcome.UNAVAILABLE) {
+                // Fallback SUM Postgres (never fail-open for paid)
+                if (sqlUserCents + estimatedCents > userCapCents) {
+                    block(Reason.BUDGET_USER, budgetUserMsg(sqlUserCents / 100.0, estimatedEur,
+                            cfg.getBudget().getUserPerDayEur(), dayEnd), dayEnd);
+                }
+                if (sqlGlobalCents + estimatedCents > globalCapCents) {
+                    block(Reason.BUDGET_GLOBAL, budgetGlobalMsg(sqlGlobalCents / 100.0, estimatedEur,
+                            cfg.getBudget().getGlobalPerDayEur(), dayEnd), dayEnd);
+                }
+                reservation = BudgetReservation.none();
+            } else if (budgetResult.outcome() == StoreOutcome.BLOCKED) {
+                if (budgetResult.blockCode() == 1) {
+                    block(Reason.BUDGET_USER, budgetUserMsg(budgetResult.userSpentCents() / 100.0,
+                            estimatedEur, cfg.getBudget().getUserPerDayEur(), dayEnd), dayEnd);
+                }
+                block(Reason.BUDGET_GLOBAL, budgetGlobalMsg(budgetResult.globalSpentCents() / 100.0,
+                        estimatedEur, cfg.getBudget().getGlobalPerDayEur(), dayEnd), dayEnd);
+            } else {
+                reservation = budgetResult.reservation();
             }
         }
 
-        // Reserve minute slot only when all checks passed
-        synchronized (window) {
-            window.addLast(now.toEpochMilli());
+        // --- Commit RPM then RPD (only after budget OK) ---
+        RateLimitResult rpmCommit = rateLimitStore.tryAcquireRpm(userId, rpm);
+        if (rpmCommit.outcome() == StoreOutcome.UNAVAILABLE) {
+            if (!redisProps.getRateLimit().isFailOpen()) {
+                budgetStore.release(reservation);
+            }
+            handleRateUnavailable(rpmCommit, Reason.RATE_LIMIT_MINUTE, rpm, dayEnd);
+        } else if (rpmCommit.outcome() == StoreOutcome.BLOCKED) {
+            budgetStore.release(reservation);
+            block(Reason.RATE_LIMIT_MINUTE,
+                    "Limite vitesse : max " + rpm + " requêtes / minute.",
+                    Instant.now().plusSeconds(60));
         }
+
+        RateLimitResult rpdCommit = rateLimitStore.tryAcquireRpd(userId, rpd, utcDate, rpdTtl);
+        if (rpdCommit.outcome() == StoreOutcome.UNAVAILABLE) {
+            if (!redisProps.getRateLimit().isFailOpen()) {
+                rateLimitStore.releaseRpm(userId, rpmCommit.rpmMemberId());
+                budgetStore.release(reservation);
+            }
+            handleRateUnavailable(rpdCommit, Reason.RATE_LIMIT_DAY, rpd, dayEnd);
+        } else if (rpdCommit.outcome() == StoreOutcome.BLOCKED) {
+            rateLimitStore.releaseRpm(userId, rpmCommit.rpmMemberId());
+            budgetStore.release(reservation);
+            block(Reason.RATE_LIMIT_DAY,
+                    "Limite équité : max " + rpd + " requêtes / jour / utilisateur. Reset à "
+                            + dayEnd + " (UTC).",
+                    dayEnd);
+        }
+
+        return new GuardAdmission(reservation);
+    }
+
+    public void releaseBudgetReservation(BudgetReservation reservation) {
+        budgetStore.release(reservation);
+    }
+
+    public void confirmBudgetReservation(BudgetReservation reservation, Model model, int promptTokens, int completionTokens) {
+        if (reservation == null || !reservation.active()) {
+            return;
+        }
+        if (promptTokens <= 0 && completionTokens <= 0) {
+            // Tokens absents → garder l'estimé (delta 0)
+            return;
+        }
+        double realEur = pricingService.calculateCostEur(
+                Math.max(promptTokens, 0),
+                Math.max(completionTokens, 0),
+                model.getName()
+        );
+        long realCents = Math.round(realEur * 100.0);
+        budgetStore.confirm(reservation, realCents);
     }
 
     public void recordSuccess(
@@ -226,21 +297,10 @@ public class UsageGuardService {
         GuardrailsProperties cfg = effectiveConfig();
         Instant dayStart = LocalDate.now(ZoneOffset.UTC).atStartOfDay().toInstant(ZoneOffset.UTC);
         Instant dayEnd = dayStart.plus(1, ChronoUnit.DAYS);
-        Instant now = Instant.now();
+        String utcDate = LocalDate.now(ZoneOffset.UTC).toString();
 
-        int rpmUsed;
-        Deque<Long> window = minuteWindows.get(userId);
-        if (window == null) {
-            rpmUsed = 0;
-        } else {
-            synchronized (window) {
-                long cutoff = now.toEpochMilli() - 60_000L;
-                while (!window.isEmpty() && window.peekFirst() < cutoff) {
-                    window.pollFirst();
-                }
-                rpmUsed = window.size();
-            }
-        }
+        RateLimitResult rpm = rateLimitStore.peekRpm(userId, cfg.getRateLimit().getRequestsPerMinute());
+        long rpmUsed = rpm.used() >= 0 ? rpm.used() : 0;
 
         long dayCount = usageLogRepository.countByUserIdAndCreatedAtBetween(userId, dayStart, dayEnd);
         double userSpent = usageLogRepository.sumEstimatedCostByUserIdAndCreatedAtBetween(userId, dayStart, dayEnd);
@@ -248,6 +308,8 @@ public class UsageGuardService {
 
         return Map.of(
                 "enabled", cfg.isEnabled(),
+                "redisEnabled", redisProps.isEnabled(),
+                "rateLimitFailOpen", redisProps.getRateLimit().isFailOpen(),
                 "speed", Map.of(
                         "requestsPerMinute", Map.of(
                                 "limit", cfg.getRateLimit().getRequestsPerMinute(),
@@ -278,13 +340,56 @@ public class UsageGuardService {
                                 "resetsAt", dayEnd.toString()
                         )
                 ),
-                "note", "Budget € s'applique uniquement aux modèles payants (pricing > 0). Ollama = rate limit seulement."
+                "note", "D1: budget block does not consume RPM/RPD. D2: RPD counts accepted attempts. "
+                        + "D3: no requestId idempotency in v1. Budget € = paid models only."
         );
+    }
+
+    /** Réconciliation globale (job) — récupère réservations orphelines après crash. */
+    public void reconcileGlobalBudgetFromSql() {
+        Instant dayStart = LocalDate.now(ZoneOffset.UTC).atStartOfDay().toInstant(ZoneOffset.UTC);
+        Instant dayEnd = dayStart.plus(1, ChronoUnit.DAYS);
+        String utcDate = LocalDate.now(ZoneOffset.UTC).toString();
+        long sqlGlobalCents = Math.round(usageLogRepository.sumEstimatedCostBetween(dayStart, dayEnd) * 100.0);
+        budgetStore.reconcileFromSql(-1, utcDate, 0, sqlGlobalCents, secondsUntilEndOfUtcDayPlusMargin());
+    }
+
+    private void handleRateUnavailable(RateLimitResult result, Reason reason, int limit, Instant dayEnd) {
+        if (result.outcome() != StoreOutcome.UNAVAILABLE) {
+            return;
+        }
+        if (redisProps.getRateLimit().isFailOpen()) {
+            meterRegistry.counter("ai_gateway_redis_fail_open_total", "reason", reason.metricLabel()).increment();
+            return;
+        }
+        block(reason,
+                "Rate limit indisponible (Redis). Réessayez plus tard. Limite=" + limit,
+                reason == Reason.RATE_LIMIT_DAY ? dayEnd : Instant.now().plusSeconds(30));
     }
 
     private void block(Reason reason, String message, Instant resetsAt) {
         meterRegistry.counter("ai_gateway_requests_blocked_total", "reason", reason.metricLabel()).increment();
         throw new GuardrailsExceededException(reason, message, resetsAt);
+    }
+
+    private static String budgetUserMsg(double spent, double est, double cap, Instant dayEnd) {
+        return String.format(
+                "Budget utilisateur : %.4f € déjà dépensés + ~%.4f € estimés > plafond %.2f € / jour. Reset à %s (UTC).",
+                spent, est, cap, dayEnd
+        );
+    }
+
+    private static String budgetGlobalMsg(double spent, double est, double cap, Instant dayEnd) {
+        return String.format(
+                "Budget global : %.4f € déjà dépensés + ~%.4f € estimés > plafond %.2f € / jour. Reset à %s (UTC).",
+                spent, est, cap, dayEnd
+        );
+    }
+
+    private static int secondsUntilEndOfUtcDayPlusMargin() {
+        Instant dayEnd = LocalDate.now(ZoneOffset.UTC).plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
+        long sec = ChronoUnit.SECONDS.between(Instant.now(), dayEnd) + 3600;
+        return (int) Math.max(3600, Math.min(sec, Integer.MAX_VALUE));
     }
 
     private static int estimatePromptTokens(List<ChatMessage> messages, int charsPerToken) {

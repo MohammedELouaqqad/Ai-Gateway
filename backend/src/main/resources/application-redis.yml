@@ -1,0 +1,21 @@
+# Redis garde-fous (lots 1–4)
+# Désactivé par défaut → stores in-memory (comportement historique).
+# Docker Compose stack : APP_REDIS_ENABLED=true + host=redis
+
+app:
+  redis:
+    enabled: ${APP_REDIS_ENABLED:false}
+    host: ${APP_REDIS_HOST:localhost}
+    port: ${APP_REDIS_PORT:6379}
+    password: ${APP_REDIS_PASSWORD:}
+    rate-limit:
+      # false = Redis down → 429 (protège la facture ; Redis = SPOF chat)
+      # true  = laisser passer + métrique redis_fail_open_total
+      fail-open: ${APP_REDIS_RL_FAIL_OPEN:false}
+    budget:
+      reconcile-interval-minutes: ${APP_REDIS_BUDGET_RECONCILE_MINUTES:5}
+
+# Décisions (README / ops) :
+# D1 — Budget block ne consomme pas RPM/RPD (peek → reserve budget → commit RPM/RPD).
+# D2 — RPD = tentative acceptée (même si LLM échoue ensuite).
+# D3 — Pas d'idempotence requestId en v1 (double retry client = limite connue).
