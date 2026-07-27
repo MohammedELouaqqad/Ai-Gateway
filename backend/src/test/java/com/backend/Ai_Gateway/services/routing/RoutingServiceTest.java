@@ -111,6 +111,97 @@ class RoutingServiceTest {
         assertThat(decision.hasWinner()).isFalse();
     }
 
+    @Test
+    void qualityProfile_prefersHigherQualityScore() {
+        routingProperties.setProfile(RoutingProperties.Profile.QUALITY);
+        routingProperties.getModelScores().put("llama3.2:1b", score(35, 95));
+        routingProperties.getModelScores().put("gpt-4o-mini", score(95, 55));
+        GuardrailsProperties.ModelPrice mini = new GuardrailsProperties.ModelPrice();
+        mini.setInputPer1kEur(0.001);
+        mini.setOutputPer1kEur(0.002);
+        guardrailsProperties.getPricing().put("gpt-4o-mini", mini);
+        pricingService = new ModelPricingService(guardrailsProperties);
+        routingService = new RoutingService(
+                routingProperties,
+                modelRepository,
+                usageLogRepository,
+                pricingService,
+                usageGuardService,
+                new SimpleMeterRegistry(),
+                decisionLogRepository
+        );
+
+        Model free = model("llama3.2:1b", true, true, ProviderType.OLLAMA);
+        Model paid = model("gpt-4o-mini", true, true, ProviderType.OPENAI);
+        when(modelRepository.findAll()).thenReturn(List.of(free, paid));
+        when(modelRepository.findByIsDefaultTrue()).thenReturn(Optional.of(free));
+
+        RoutingDecision decision = routingService.decide(1L, 100, false);
+
+        assertThat(decision.profile()).isEqualTo(RoutingProperties.Profile.QUALITY);
+        assertThat(decision.selectedModelName()).isEqualTo("gpt-4o-mini");
+        assertThat(decision.mode()).isEqualTo(RoutingProperties.Mode.SHADOW);
+    }
+
+    @Test
+    void speedProfile_prefersFasterLocalModel() {
+        routingProperties.setProfile(RoutingProperties.Profile.SPEED);
+        routingProperties.getModelScores().put("llama3.2:1b", score(35, 95));
+        routingProperties.getModelScores().put("gpt-4o-mini", score(75, 40));
+        GuardrailsProperties.ModelPrice mini = new GuardrailsProperties.ModelPrice();
+        mini.setInputPer1kEur(0.001);
+        mini.setOutputPer1kEur(0.002);
+        guardrailsProperties.getPricing().put("gpt-4o-mini", mini);
+        pricingService = new ModelPricingService(guardrailsProperties);
+        routingService = new RoutingService(
+                routingProperties,
+                modelRepository,
+                usageLogRepository,
+                pricingService,
+                usageGuardService,
+                new SimpleMeterRegistry(),
+                decisionLogRepository
+        );
+
+        Model free = model("llama3.2:1b", true, true, ProviderType.OLLAMA);
+        Model paid = model("gpt-4o-mini", true, true, ProviderType.OPENAI);
+        when(modelRepository.findAll()).thenReturn(List.of(free, paid));
+        when(modelRepository.findByIsDefaultTrue()).thenReturn(Optional.of(free));
+
+        RoutingDecision decision = routingService.decide(1L, 100, false);
+
+        assertThat(decision.profile()).isEqualTo(RoutingProperties.Profile.SPEED);
+        assertThat(decision.selectedModelName()).isEqualTo("llama3.2:1b");
+    }
+
+    @Test
+    void activeMode_isPropagatedOnDecision() {
+        routingProperties.setMode(RoutingProperties.Mode.ACTIVE);
+        routingService = new RoutingService(
+                routingProperties,
+                modelRepository,
+                usageLogRepository,
+                pricingService,
+                usageGuardService,
+                new SimpleMeterRegistry(),
+                decisionLogRepository
+        );
+        Model free = model("llama3.2:1b", true, true, ProviderType.OLLAMA);
+        when(modelRepository.findAll()).thenReturn(List.of(free));
+        when(modelRepository.findByIsDefaultTrue()).thenReturn(Optional.of(free));
+
+        RoutingDecision decision = routingService.decide(1L, 50, false);
+        assertThat(decision.mode()).isEqualTo(RoutingProperties.Mode.ACTIVE);
+        assertThat(decision.hasWinner()).isTrue();
+    }
+
+    private static RoutingProperties.ModelScore score(double quality, double speed) {
+        RoutingProperties.ModelScore ms = new RoutingProperties.ModelScore();
+        ms.setQuality(quality);
+        ms.setSpeed(speed);
+        return ms;
+    }
+
     private static Model model(String name, boolean modelEnabled, boolean providerEnabled, ProviderType type) {
         Provider provider = new Provider();
         provider.setId(name.hashCode() + 100L);

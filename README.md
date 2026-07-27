@@ -265,6 +265,16 @@ curl -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8080/api/provider
 cd backend && ./mvnw test
 ```
 
+Couverture prioritaire ajoutée :
+
+| Type | Exemples |
+|------|----------|
+| Unitaire | `UsageGuardServiceTest` (RPM/RPD/budget/D1), `ModelPricingServiceTest`, `ChatServiceBudgetLifecycleTest` (release/confirm), `InMemoryGuardStoresTest`, `RoutingServiceTest`, `ProviderFailureClassifierTest` |
+| Intégration Redis | `RedisGuardStoresIT` (Testcontainers `redis:7-alpine`, skip si Docker absent) |
+| Intégration HTTP | `AuthAndChatIntegrationTest` (401/403, routing simulate, chat mock LLM), `ApiSmokeTest`, `SecurityRegressionTest` |
+
+Prérequis IT Spring : PostgreSQL joignable (comme les tests existants). Redis IT : Docker.
+
 ## Swagger / OpenAPI
 
 UI : http://localhost:8080/swagger-ui.html  
