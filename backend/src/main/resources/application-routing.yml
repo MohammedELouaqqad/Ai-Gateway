@@ -4,12 +4,31 @@
 app:
   routing:
     enabled: true
-    # SHADOW = decide + log, still use default model | ACTIVE = use ranked winner
+    # SHADOW = log only | CANARY = sticky % live | ACTIVE = all auto traffic live
     mode: SHADOW
+    # 0–100 — only used when mode=CANARY; sticky by conversationId (else userId).
+    # Raising percent is monotone: hash % 100 < pct keeps prior live buckets.
+    canary-percent: 10
     profile: BALANCED
     max-retries: 1
     retry-backoff-ms: 200
     default-context-chars: 120000
+    # Absolute € ceiling for costScore (0 = max estimate over full catalog, including disabled).
+    # Prefer a fixed ceiling in prod so deleting a model from DB does not reshuffle scores.
+    # Free models (Ollama €0) still score 100 on cost — under ECONOMY that prefers local by design.
+    cost-score-ceiling-eur: 0
+    # Thumbs/judge never auto-update model-scores.quality — humans adjust YAML after review.
+    quality-feedback-loop: HUMAN_IN_THE_LOOP
+    privacy:
+      snapshot-retention-days: 14
+      clear-snapshots-after-judge: true
+    # Phase 2: one proposed-model run vs stored applied answer (never re-run applied).
+    # Per-case verdicts are noisy; trust aggregate counts only.
+    judge:
+      enabled: true
+      batch-size: 5
+      llm-compare: false
+      compare-model:
     # Optional per-model context windows (chars). Missing → default-context-chars
     context-windows: {}
     # Soft preference scores 0–100 (missing → 50)

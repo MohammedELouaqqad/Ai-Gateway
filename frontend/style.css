@@ -2192,6 +2192,58 @@ textarea:focus-visible {
   border-bottom-left-radius: var(--radius-sm);
 }
 
+.chat-message__feedback {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.chat-feedback-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.chat-feedback-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+.chat-feedback-btn.is-active.is-up {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.45);
+}
+
+.chat-feedback-btn.is-active.is-down {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+.chat-feedback-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .chat-message--system .chat-message__bubble {
   background: transparent;
   border: 1px dashed var(--border-default);

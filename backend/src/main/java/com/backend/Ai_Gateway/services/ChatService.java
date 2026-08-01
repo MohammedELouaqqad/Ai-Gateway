@@ -6,8 +6,9 @@ import com.backend.Ai_Gateway.config.RoutingProperties;
 import com.backend.Ai_Gateway.entity.Conversation;
 import com.backend.Ai_Gateway.entity.Message;
 import com.backend.Ai_Gateway.entity.Model;
+import com.backend.Ai_Gateway.enums.FeedbackRating;
+import com.backend.Ai_Gateway.enums.FeedbackSource;
 import com.backend.Ai_Gateway.enums.ProviderType;
-import com.backend.Ai_Gateway.enums.RequestStatus;
 import com.backend.Ai_Gateway.exceptions.ProviderNotImplementedException;
 import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
@@ -19,6 +20,7 @@ import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.repositories.ConversationRepository;
 import com.backend.Ai_Gateway.repositories.UserRepository;
+import com.backend.Ai_Gateway.services.dto.UsageLogEntry;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
 import com.backend.Ai_Gateway.services.guardrails.GuardAdmission;
 import com.backend.Ai_Gateway.services.routing.ProviderFailureAction;
@@ -52,6 +54,7 @@ public class ChatService {
     private final UsageGuardService usageGuardService;
     private final LLMProviderRouter llmProviderRouter;
     private final RoutingService routingService;
+    private final MessageFeedbackService messageFeedbackService;
 
     public ChatService(
             ConversationRepository conversationRepository,
@@ -62,7 +65,8 @@ public class ChatService {
             UsageService usageService,
             UsageGuardService usageGuardService,
             LLMProviderRouter llmProviderRouter,
-            RoutingService routingService
+            RoutingService routingService,
+            MessageFeedbackService messageFeedbackService
     ) {
         this.conversationRepository = conversationRepository;
         this.userRepository = userRepository;
@@ -73,10 +77,73 @@ public class ChatService {
         this.usageGuardService = usageGuardService;
         this.llmProviderRouter = llmProviderRouter;
         this.routingService = routingService;
+        this.messageFeedbackService = messageFeedbackService;
     }
 
     public ChatResponse handleChat(Long userId, UserChatRequest userChatRequest) {
         PreparedChat prepared = prepareChat(userId, userChatRequest, false);
+        return completeSyncChat(userId, prepared);
+    }
+
+    /**
+     * Regenerate an assistant reply: marks the old message as regenerated, records an implicit
+     * DOWN (source=REGENERATED), re-runs the LLM on history up to the preceding user message
+     * (no duplicate user message), and links supersededBy.
+     */
+    public ChatResponse regenerateAssistant(Long userId, Long assistantMessageId) {
+        Message oldAssistant = messageService.requireOwnedAssistantMessage(userId, assistantMessageId);
+        if (oldAssistant.isRegenerated()) {
+            throw new IllegalArgumentException("message: already regenerated");
+        }
+        Message userMessage = messageService.findPrecedingUserMessage(oldAssistant);
+        Conversation conversation = oldAssistant.getConversation();
+
+        messageFeedbackService.upsert(
+                userId,
+                assistantMessageId,
+                FeedbackRating.DOWN,
+                "regenerated",
+                FeedbackSource.REGENERATED
+        );
+
+        Model model = oldAssistant.getModelName() != null && !oldAssistant.getModelName().isBlank()
+                ? modelService.resolveActiveModel(oldAssistant.getModelName())
+                : modelService.resolveActiveModel(null);
+        ensureAdapterAvailable(model, false);
+
+        List<Message> history = messageService.getMessagesByConversationId(userId, conversation.getId());
+        List<Message> clipped = new ArrayList<>();
+        for (Message m : history) {
+            clipped.add(m);
+            if (m.getId().equals(userMessage.getId())) {
+                break;
+            }
+        }
+        List<ChatMessage> chatMessages = fitToContextBudget(clipped);
+        ChatRequest request = new ChatRequest(model.getName(), chatMessages);
+        PreparedChat prepared = new PreparedChat(
+                model,
+                conversation,
+                request,
+                null,
+                "regenerate",
+                null,
+                null,
+                null,
+                null
+        );
+
+        ChatResponse response = completeSyncChat(userId, prepared);
+        // persistSuccess already created the new assistant — link supersession on the previous one
+        Message newest = messageService.findLatestAssistantMessage(conversation.getId())
+                .orElse(null);
+        if (newest != null && !newest.getId().equals(oldAssistant.getId())) {
+            messageService.markRegenerated(oldAssistant, newest.getId());
+        }
+        return response;
+    }
+
+    private ChatResponse completeSyncChat(Long userId, PreparedChat prepared) {
         GuardAdmission admission = usageGuardService.assertAllowed(
                 userId, prepared.model(), prepared.request().messages());
         long startedAt = System.currentTimeMillis();
@@ -127,18 +194,7 @@ public class ChatService {
                             routingService.meterFallback(ProviderFailureClassifier.reasonLabel(action, ex));
                             break;
                         }
-                        usageService.logChatUsage(
-                                userId,
-                                candidate.getId(),
-                                0,
-                                0,
-                                System.currentTimeMillis() - startedAt,
-                                RequestStatus.ERROR,
-                                prepared.routingReason(),
-                                prepared.routingMode(),
-                                prepared.routingProfile(),
-                                prepared.routingSelectedModel()
-                        );
+                        logError(userId, candidate.getId(), prepared, startedAt);
                         throw ex;
                     }
                 }
@@ -189,18 +245,7 @@ public class ChatService {
         emitter.onTimeout(() -> {
             cancelUpstream.run();
             releaseBudgetIfNeeded.run();
-            usageService.logChatUsage(
-                    userId,
-                    prepared.model().getId(),
-                    0,
-                    0,
-                    System.currentTimeMillis() - startedAt,
-                    RequestStatus.ERROR,
-                    prepared.routingReason(),
-                    prepared.routingMode(),
-                    prepared.routingProfile(),
-                    prepared.routingSelectedModel()
-            );
+            logError(userId, prepared.model().getId(), prepared, startedAt);
             emitter.complete();
         });
         emitter.onError(ex -> {
@@ -230,18 +275,7 @@ public class ChatService {
                         },
                         error -> {
                             releaseBudgetIfNeeded.run();
-                            usageService.logChatUsage(
-                                    userId,
-                                    prepared.model().getId(),
-                                    0,
-                                    0,
-                                    System.currentTimeMillis() - startedAt,
-                                    RequestStatus.ERROR,
-                                    prepared.routingReason(),
-                                    prepared.routingMode(),
-                                    prepared.routingProfile(),
-                                    prepared.routingSelectedModel()
-                            );
+                            logError(userId, prepared.model().getId(), prepared, startedAt);
                             emitter.completeWithError(error);
                         },
                         () -> {
@@ -277,18 +311,7 @@ public class ChatService {
                                 emitter.complete();
                             } catch (Exception ex) {
                                 releaseBudgetIfNeeded.run();
-                                usageService.logChatUsage(
-                                        userId,
-                                        prepared.model().getId(),
-                                        0,
-                                        0,
-                                        System.currentTimeMillis() - startedAt,
-                                        RequestStatus.ERROR,
-                                        prepared.routingReason(),
-                                        prepared.routingMode(),
-                                        prepared.routingProfile(),
-                                        prepared.routingSelectedModel()
-                                );
+                                logError(userId, prepared.model().getId(), prepared, startedAt);
                                 emitter.completeWithError(ex);
                             }
                         }
@@ -319,52 +342,72 @@ public class ChatService {
         String routingMode = null;
         String routingProfile = null;
         String routingSelectedModel = null;
+        Long decisionLogId = null;
+
+        Conversation conversation = getOrCreateConversation(userId, userChatRequest.getConversationId());
+        Message userMessage = messageService.createUserMessage(content, conversation.getId(), userId);
 
         if (explicitModel || !routingCfg.isEnabled()) {
             model = modelService.resolveActiveModel(userChatRequest.getModel());
             routingReason = explicitModel ? "explicit" : "routing_disabled";
         } else {
             int promptChars = content.length();
-            if (userChatRequest.getConversationId() != null) {
-                try {
-                    List<Message> existing = messageService.getMessagesByConversationId(
-                            userId, userChatRequest.getConversationId());
-                    for (Message m : existing) {
-                        if (m.getContent() != null) {
-                            promptChars += m.getContent().length();
-                        }
+            try {
+                List<Message> existing = messageService.getMessagesByConversationId(userId, conversation.getId());
+                for (Message m : existing) {
+                    if (m.getId().equals(userMessage.getId())) {
+                        continue;
                     }
-                } catch (RuntimeException ignored) {
-                    // conversation may not exist yet / not owned — use content only
+                    if (m.getContent() != null) {
+                        promptChars += m.getContent().length();
+                    }
                 }
+            } catch (RuntimeException ignored) {
+                // use content only
             }
             decision = routingService.decide(userId, promptChars, streaming);
+            // Effective mode for logging: keep configured mode (SHADOW/CANARY/ACTIVE)
             routingMode = decision.mode().name();
             routingProfile = decision.profile().name();
             routingSelectedModel = decision.selectedModelName();
 
-            boolean useWinner = decision.mode() == RoutingProperties.Mode.ACTIVE && decision.hasWinner();
-            if (useWinner) {
+            boolean applyLive = routingService.shouldApplyLiveWinner(conversation.getId(), userId)
+                    && decision.hasWinner();
+            if (applyLive) {
                 Model winner = routingService.resolveModelEntity(decision.selectedModelName());
                 model = winner != null ? winner : modelService.resolveActiveModel(null);
-                routingReason = winner != null ? "active_winner" : "active_fallback_default";
+                if (winner != null) {
+                    routingReason = decision.mode() == RoutingProperties.Mode.CANARY
+                            ? "canary_winner"
+                            : "active_winner";
+                } else {
+                    routingReason = "active_fallback_default";
+                }
             } else {
                 model = modelService.resolveActiveModel(null);
-                routingReason = "shadow_default";
+                if (decision.mode() == RoutingProperties.Mode.CANARY) {
+                    routingReason = "canary_holdout_default";
+                } else {
+                    routingReason = "shadow_default";
+                }
             }
 
             boolean diverged = decision.hasWinner()
                     && decision.selectedModelName() != null
                     && !decision.selectedModelName().equals(model.getName());
-            routingService.persistAndMeter(decision, userId, model.getName(), diverged);
+            decisionLogId = routingService.persistAndMeter(
+                    decision,
+                    userId,
+                    model.getName(),
+                    diverged,
+                    content,
+                    conversation.getId(),
+                    userMessage.getId()
+            );
         }
 
         ensureAdapterAvailable(model, streaming);
-
-        Conversation conversation = getOrCreateConversation(userId, userChatRequest.getConversationId());
         attachModelToConversation(conversation, model);
-
-        messageService.createUserMessage(content, conversation.getId(), userId);
 
         List<Message> messages = messageService.getMessagesByConversationId(userId, conversation.getId());
         List<ChatMessage> chatMessages = fitToContextBudget(messages);
@@ -377,15 +420,19 @@ public class ChatService {
                 routingReason,
                 routingMode,
                 routingProfile,
-                routingSelectedModel
+                routingSelectedModel,
+                decisionLogId
         );
     }
 
     private List<Model> buildTryOrder(PreparedChat prepared) {
         RoutingProperties cfg = routingService.effectiveConfig();
+        boolean liveReason = "active_winner".equals(prepared.routingReason())
+                || "canary_winner".equals(prepared.routingReason());
         if (prepared.decision() == null
-                || cfg.getMode() != RoutingProperties.Mode.ACTIVE
-                || !"active_winner".equals(prepared.routingReason())) {
+                || !liveReason
+                || (cfg.getMode() != RoutingProperties.Mode.ACTIVE
+                    && cfg.getMode() != RoutingProperties.Mode.CANARY)) {
             return List.of(prepared.model());
         }
         List<Model> ranked = routingService.rankedModels(prepared.decision());
@@ -414,6 +461,22 @@ public class ChatService {
         }
     }
 
+    /**
+     * Logs ERROR usage for the model that failed (may differ from {@code prepared.model()}
+     * after sync fallback attempts).
+     */
+    private void logError(Long userId, Long modelId, PreparedChat prepared, long startedAt) {
+        usageService.logChatUsage(UsageLogEntry.error(
+                userId,
+                modelId,
+                System.currentTimeMillis() - startedAt,
+                prepared.routingReason(),
+                prepared.routingMode(),
+                prepared.routingProfile(),
+                prepared.routingSelectedModel()
+        ));
+    }
+
     /** Avant persistence du message user et avant tout SseEmitter. */
     private void ensureAdapterAvailable(Model model, boolean streaming) {
         ProviderType type = model.getProvider().getType();
@@ -426,24 +489,30 @@ public class ChatService {
     }
 
     private void persistSuccess(Long userId, PreparedChat prepared, ChatResponse response, long latencyMs) {
-        messageService.createAssistantMessage(
+        Message assistant = messageService.createAssistantMessage(
                 response.content(),
                 prepared.conversation().getId(),
                 userId,
                 prepared.model()
         );
-        usageService.logChatUsage(
+        routingService.attachAppliedResponse(
+                prepared.decisionLogId(),
+                assistant.getId(),
+                response.content(),
+                response.promptTokens(),
+                response.completionTokens()
+        );
+        usageService.logChatUsage(UsageLogEntry.success(
                 userId,
                 prepared.model().getId(),
                 response.promptTokens(),
                 response.completionTokens(),
                 latencyMs,
-                RequestStatus.SUCCESS,
                 prepared.routingReason(),
                 prepared.routingMode(),
                 prepared.routingProfile(),
                 prepared.routingSelectedModel()
-        );
+        ));
         usageGuardService.recordSuccess(
                 userId,
                 prepared.model(),
@@ -461,19 +530,20 @@ public class ChatService {
             String routingReason,
             String routingMode,
             String routingProfile,
-            String routingSelectedModel
+            String routingSelectedModel,
+            Long decisionLogId
     ) {
         PreparedChat withModel(Model next, ChatRequest nextRequest) {
             return new PreparedChat(
                     next, conversation, nextRequest, decision,
-                    routingReason, routingMode, routingProfile, routingSelectedModel
+                    routingReason, routingMode, routingProfile, routingSelectedModel, decisionLogId
             );
         }
 
         PreparedChat withRoutingReason(String reason) {
             return new PreparedChat(
                     model, conversation, request, decision,
-                    reason, routingMode, routingProfile, routingSelectedModel
+                    reason, routingMode, routingProfile, routingSelectedModel, decisionLogId
             );
         }
     }
@@ -502,7 +572,7 @@ public class ChatService {
      * Garde les messages les plus récents dans un budget caractères pour limiter
      * le risque de dépasser la fenêtre de contexte du modèle.
      */
-    static List<ChatMessage> fitToContextBudget(List<Message> messages) {
+    public static List<ChatMessage> fitToContextBudget(List<Message> messages) {
         if (messages == null || messages.isEmpty()) {
             return List.of();
         }
@@ -512,6 +582,9 @@ public class ChatService {
 
         for (int i = messages.size() - 1; i >= 0; i--) {
             Message m = messages.get(i);
+            if (m.isRegenerated()) {
+                continue; // superseded answers must not pollute context / judge baselines
+            }
             String body = m.getContent() == null ? "" : m.getContent();
             int cost = body.length();
             if (!selected.isEmpty() && used + cost > ContentLimits.CHAT_CONTEXT_CHAR_BUDGET) {

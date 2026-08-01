@@ -9,6 +9,7 @@ import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.repositories.ModelRepository;
 import com.backend.Ai_Gateway.repositories.UsageLogRepository;
 import com.backend.Ai_Gateway.repositories.UserRepository;
+import com.backend.Ai_Gateway.services.dto.UsageLogEntry;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -45,37 +46,17 @@ public class UsageService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void logChatUsage(
-            Long userId,
-            Long modelId,
-            Integer promptTokens,
-            Integer completionTokens,
-            long latencyMs,
-            RequestStatus status
-    ) {
-        logChatUsage(userId, modelId, promptTokens, completionTokens, latencyMs, status, null, null, null, null);
-    }
-
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void logChatUsage(
-            Long userId,
-            Long modelId,
-            Integer promptTokens,
-            Integer completionTokens,
-            long latencyMs,
-            RequestStatus status,
-            String routingAppliedReason,
-            String routingMode,
-            String routingProfile,
-            String routingSelectedModel
-    ) {
-        User user = userRepository.findById(userId)
+    public void logChatUsage(UsageLogEntry entry) {
+        if (entry == null) {
+            throw new IllegalArgumentException("UsageLogEntry is required");
+        }
+        User user = userRepository.findById(entry.userId())
                 .orElseThrow(() -> new RessourceNotFoundException("User not found"));
-        Model model = modelRepository.findById(modelId)
+        Model model = modelRepository.findById(entry.modelId())
                 .orElseThrow(() -> new RessourceNotFoundException("Model not found"));
 
-        int prompt = promptTokens != null ? promptTokens : 0;
-        int completion = completionTokens != null ? completionTokens : 0;
+        int prompt = entry.promptTokens() != null ? entry.promptTokens() : 0;
+        int completion = entry.completionTokens() != null ? entry.completionTokens() : 0;
 
         UsageLog usageLog = new UsageLog();
         usageLog.setUser(user);
@@ -84,16 +65,32 @@ public class UsageService {
         usageLog.setPromptTokens(prompt);
         usageLog.setCompletionTokens(completion);
         usageLog.setTotalTokens(prompt + completion);
-        usageLog.setLatencyMs(latencyMs);
-        usageLog.setStatus(status);
+        usageLog.setLatencyMs(entry.latencyMs());
+        usageLog.setStatus(entry.status());
         usageLog.setCreatedAt(Instant.now());
         usageLog.setEstimatedCost(calculateCost(prompt, completion, model.getName()));
-        usageLog.setRoutingAppliedReason(routingAppliedReason);
-        usageLog.setRoutingMode(routingMode);
-        usageLog.setRoutingProfile(routingProfile);
-        usageLog.setRoutingSelectedModel(routingSelectedModel);
+        usageLog.setRoutingAppliedReason(entry.routingAppliedReason());
+        usageLog.setRoutingMode(entry.routingMode());
+        usageLog.setRoutingProfile(entry.routingProfile());
+        usageLog.setRoutingSelectedModel(entry.routingSelectedModel());
 
         usageLogRepository.save(usageLog);
+    }
+
+    /** Convenience overload without routing metadata. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logChatUsage(
+            Long userId,
+            Long modelId,
+            Integer promptTokens,
+            Integer completionTokens,
+            long latencyMs,
+            RequestStatus status
+    ) {
+        logChatUsage(new UsageLogEntry(
+                userId, modelId, promptTokens, completionTokens, latencyMs, status,
+                null, null, null, null
+        ));
     }
 
     public int getTotalTokensByUserId(Long userId) {

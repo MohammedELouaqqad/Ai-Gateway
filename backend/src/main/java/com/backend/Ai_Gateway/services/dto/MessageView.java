@@ -1,0 +1,34 @@
+package com.backend.Ai_Gateway.services.dto;
+
+import com.backend.Ai_Gateway.entity.Message;
+import com.backend.Ai_Gateway.enums.FeedbackRating;
+import com.backend.Ai_Gateway.enums.MessageRole;
+
+import java.time.Instant;
+
+/** Message list payload including the current user's feedback (if any). */
+public record MessageView(
+        Long id,
+        MessageRole role,
+        String content,
+        Instant createdAt,
+        String modelName,
+        String modelDisplayName,
+        FeedbackRating myFeedback,
+        boolean regenerated,
+        Long supersededByMessageId
+) {
+    public static MessageView from(Message message, FeedbackRating myFeedback) {
+        return new MessageView(
+                message.getId(),
+                message.getRole(),
+                message.getContent(),
+                message.getCreatedAt(),
+                message.getModelName(),
+                message.getModelDisplayName(),
+                myFeedback,
+                message.isRegenerated(),
+                message.getSupersededByMessageId()
+        );
+    }
+}

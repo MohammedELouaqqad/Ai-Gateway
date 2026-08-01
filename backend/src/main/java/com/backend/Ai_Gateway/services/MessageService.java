@@ -91,4 +91,53 @@ public class MessageService {
         return messageRepository.findByConversation_IdOrderByCreatedAtAscIdAsc(conversationId);
     }
 
+    public Message requireOwnedAssistantMessage(Long userId, Long messageId) {
+        Message message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new RessourceNotFoundException("Message not found"));
+        if (message.getConversation() == null
+                || message.getConversation().getUser() == null
+                || !message.getConversation().getUser().getId().equals(userId)) {
+            throw new UnauthorizedException("Vous n'êtes pas propriétaire de ce message");
+        }
+        if (message.getRole() != MessageRole.ASSISTANT) {
+            throw new IllegalArgumentException("message: only assistant messages can be regenerated");
+        }
+        return message;
+    }
+
+    public Message findPrecedingUserMessage(Message assistant) {
+        List<Message> all = messageRepository.findByConversation_IdOrderByCreatedAtAscIdAsc(
+                assistant.getConversation().getId());
+        Message previousUser = null;
+        for (Message m : all) {
+            if (m.getId().equals(assistant.getId())) {
+                break;
+            }
+            if (m.getRole() == MessageRole.USER) {
+                previousUser = m;
+            }
+        }
+        if (previousUser == null) {
+            throw new IllegalArgumentException("message: no preceding user message to regenerate");
+        }
+        return previousUser;
+    }
+
+    @Transactional
+    public void markRegenerated(Message oldAssistant, Long newAssistantId) {
+        oldAssistant.setRegenerated(true);
+        oldAssistant.setSupersededByMessageId(newAssistantId);
+        messageRepository.save(oldAssistant);
+    }
+
+    public java.util.Optional<Message> findLatestAssistantMessage(Long conversationId) {
+        List<Message> all = messageRepository.findByConversation_IdOrderByCreatedAtAscIdAsc(conversationId);
+        for (int i = all.size() - 1; i >= 0; i--) {
+            if (all.get(i).getRole() == MessageRole.ASSISTANT && !all.get(i).isRegenerated()) {
+                return java.util.Optional.of(all.get(i));
+            }
+        }
+        return java.util.Optional.empty();
+    }
+
 }

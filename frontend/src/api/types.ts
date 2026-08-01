@@ -70,8 +70,14 @@ export interface ApiMessage {
   createdAt?: string
   modelName?: string | null
   modelDisplayName?: string | null
+  /** Current user's thumbs on this assistant message (null if none). */
+  myFeedback?: FeedbackRating | null
+  regenerated?: boolean
+  supersededByMessageId?: number | null
   conversation?: { id: number }
 }
+
+export type FeedbackRating = 'UP' | 'DOWN'
 
 export interface ChatRequest {
   conversationId?: number | null

@@ -2,15 +2,18 @@ package com.backend.Ai_Gateway.services;
 
 import com.backend.Ai_Gateway.config.RoutingProperties;
 import com.backend.Ai_Gateway.entity.Conversation;
+import com.backend.Ai_Gateway.entity.Message;
 import com.backend.Ai_Gateway.entity.Model;
 import com.backend.Ai_Gateway.entity.Provider;
 import com.backend.Ai_Gateway.entity.User;
+import com.backend.Ai_Gateway.enums.MessageRole;
 import com.backend.Ai_Gateway.enums.ProviderType;
 import com.backend.Ai_Gateway.enums.RequestStatus;
 import com.backend.Ai_Gateway.provider.LLMProviderRouter;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.repositories.ConversationRepository;
 import com.backend.Ai_Gateway.repositories.UserRepository;
+import com.backend.Ai_Gateway.services.dto.UsageLogEntry;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
 import com.backend.Ai_Gateway.services.guardrails.BudgetReservation;
 import com.backend.Ai_Gateway.services.guardrails.GuardAdmission;
@@ -18,12 +21,14 @@ import com.backend.Ai_Gateway.services.routing.RoutingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -46,6 +51,7 @@ class ChatServiceBudgetLifecycleTest {
     @Mock UsageGuardService usageGuardService;
     @Mock LLMProviderRouter llmProviderRouter;
     @Mock RoutingService routingService;
+    @Mock MessageFeedbackService messageFeedbackService;
 
     private ChatService chatService;
     private Model model;
@@ -63,7 +69,8 @@ class ChatServiceBudgetLifecycleTest {
                 usageService,
                 usageGuardService,
                 llmProviderRouter,
-                routingService
+                routingService,
+                messageFeedbackService
         );
 
         provider = new Provider();
@@ -87,7 +94,18 @@ class ChatServiceBudgetLifecycleTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(modelService.resolveActiveModel("gpt-4o-mini")).thenReturn(model);
         when(conversationService.createConversation(1L)).thenReturn(conversation);
-        when(messageService.getMessagesByConversationId(1L, 10L)).thenReturn(List.of());
+        Message userMsg = new Message();
+        userMsg.setId(40L);
+        userMsg.setRole(MessageRole.USER);
+        when(messageService.createUserMessage(any(), eq(10L), eq(1L))).thenReturn(userMsg);
+        when(messageService.getMessagesByConversationId(1L, 10L)).thenReturn(List.of(userMsg));
+        lenient().when(messageService.createAssistantMessage(any(), eq(10L), eq(1L), any())).thenAnswer(inv -> {
+            Message a = new Message();
+            a.setId(50L);
+            a.setRole(MessageRole.ASSISTANT);
+            a.setContent(inv.getArgument(0));
+            return a;
+        });
     }
 
     @Test
@@ -103,9 +121,14 @@ class ChatServiceBudgetLifecycleTest {
 
         verify(usageGuardService).releaseBudgetReservation(reservation);
         verify(usageGuardService, never()).confirmBudgetReservation(any(), any(), anyInt(), anyInt());
-        verify(usageService).logChatUsage(
-                eq(1L), eq(2L), eq(0), eq(0), anyLong(), eq(RequestStatus.ERROR),
-                any(), any(), any(), any());
+        ArgumentCaptor<UsageLogEntry> usage = ArgumentCaptor.forClass(UsageLogEntry.class);
+        verify(usageService).logChatUsage(usage.capture());
+        UsageLogEntry entry = usage.getValue();
+        assertEquals(1L, entry.userId());
+        assertEquals(2L, entry.modelId());
+        assertEquals(0, entry.promptTokens());
+        assertEquals(0, entry.completionTokens());
+        assertEquals(RequestStatus.ERROR, entry.status());
     }
 
     @Test

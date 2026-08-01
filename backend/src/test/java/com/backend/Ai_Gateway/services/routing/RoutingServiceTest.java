@@ -195,6 +195,52 @@ class RoutingServiceTest {
         assertThat(decision.hasWinner()).isTrue();
     }
 
+    @Test
+    void costScore_absoluteBand_stableWhenExpensiveModelDisabled() {
+        routingProperties.setProfile(RoutingProperties.Profile.BALANCED);
+        GuardrailsProperties.ModelPrice mini = new GuardrailsProperties.ModelPrice();
+        mini.setInputPer1kEur(0.001);
+        mini.setOutputPer1kEur(0.002);
+        GuardrailsProperties.ModelPrice full = new GuardrailsProperties.ModelPrice();
+        full.setInputPer1kEur(0.01);
+        full.setOutputPer1kEur(0.03);
+        guardrailsProperties.getPricing().put("gpt-4o-mini", mini);
+        guardrailsProperties.getPricing().put("gpt-4o", full);
+        pricingService = new ModelPricingService(guardrailsProperties);
+        routingService = new RoutingService(
+                routingProperties,
+                modelRepository,
+                usageLogRepository,
+                pricingService,
+                usageGuardService,
+                new SimpleMeterRegistry(),
+                decisionLogRepository
+        );
+
+        Model mid = model("gpt-4o-mini", true, true, ProviderType.OPENAI);
+        Model expensive = model("gpt-4o", true, true, ProviderType.OPENAI);
+        when(modelRepository.findAll()).thenReturn(List.of(mid, expensive));
+        when(modelRepository.findByIsDefaultTrue()).thenReturn(Optional.of(mid));
+        double scoreWithBoth = costScoreOf(routingService.decide(1L, 1000, false), "gpt-4o-mini");
+
+        // Expensive stays in catalog but disabled — ceiling still includes its estimate
+        Model expensiveOff = model("gpt-4o", false, true, ProviderType.OPENAI);
+        when(modelRepository.findAll()).thenReturn(List.of(mid, expensiveOff));
+        double scoreAfterDisable = costScoreOf(routingService.decide(1L, 1000, false), "gpt-4o-mini");
+
+        assertThat(scoreAfterDisable).isEqualTo(scoreWithBoth);
+        assertThat(routingService.decide(1L, 1000, false).signals().get("costScoreBasis"))
+                .isEqualTo("ABSOLUTE_BAND");
+    }
+
+    private static double costScoreOf(RoutingDecision decision, String modelName) {
+        return decision.ranked().stream()
+                .filter(c -> modelName.equals(c.modelName()))
+                .findFirst()
+                .orElseThrow()
+                .costScore();
+    }
+
     private static RoutingProperties.ModelScore score(double quality, double speed) {
         RoutingProperties.ModelScore ms = new RoutingProperties.ModelScore();
         ms.setQuality(quality);

@@ -3,10 +3,13 @@ import { AppLayout } from '../layouts/AppLayout'
 import { ApiStateBanner } from '../components/ApiStateBanner'
 import { Badge } from '../components/Badge'
 import {
+  fetchModelQuality,
   fetchRoutingConfig,
   fetchShadowStats,
+  runRoutingJudge,
   simulateRouting,
   updateRoutingConfig,
+  type ModelQualityResponse,
   type RoutingConfig,
   type RoutingDecision,
   type RoutingMode,
@@ -20,6 +23,7 @@ export function RoutingPage() {
   const r = pages.routing
   const [config, setConfig] = useState<RoutingConfig | null>(null)
   const [stats, setStats] = useState<ShadowStats | null>(null)
+  const [modelQuality, setModelQuality] = useState<ModelQualityResponse | null>(null)
   const [decision, setDecision] = useState<RoutingDecision | null>(null)
   const [form, setForm] = useState<Partial<RoutingConfig>>({})
   const [prompt, setPrompt] = useState('Summarize this text in 5 bullets.')
@@ -27,17 +31,24 @@ export function RoutingPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [simulating, setSimulating] = useState(false)
+  const [judging, setJudging] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [cfg, st] = await Promise.all([fetchRoutingConfig(), fetchShadowStats(statsDays)])
+      const [cfg, st, quality] = await Promise.all([
+        fetchRoutingConfig(),
+        fetchShadowStats(statsDays),
+        fetchModelQuality(),
+      ])
       setConfig(cfg)
       setStats(st)
+      setModelQuality(quality)
       setForm({
         enabled: cfg.enabled,
         mode: cfg.mode,
+        canaryPercent: cfg.canaryPercent ?? 10,
         profile: cfg.profile,
         maxRetries: cfg.maxRetries,
         retryBackoffMs: cfg.retryBackoffMs,
@@ -60,6 +71,10 @@ export function RoutingPage() {
       const ok = window.confirm(r.activateWarning)
       if (!ok) return
     }
+    if (form.mode === 'CANARY' && config?.mode !== 'CANARY') {
+      const ok = window.confirm(r.activateCanaryWarning)
+      if (!ok) return
+    }
     setSaving(true)
     try {
       const updated = await updateRoutingConfig(form)
@@ -67,6 +82,7 @@ export function RoutingPage() {
       setForm({
         enabled: updated.enabled,
         mode: updated.mode,
+        canaryPercent: updated.canaryPercent ?? 10,
         profile: updated.profile,
         maxRetries: updated.maxRetries,
         retryBackoffMs: updated.retryBackoffMs,
@@ -95,6 +111,20 @@ export function RoutingPage() {
     }
   }
 
+  async function onJudgeRun() {
+    setJudging(true)
+    try {
+      await runRoutingJudge(5, 'ALL')
+      const st = await fetchShadowStats(statsDays)
+      setStats(st)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : common.loadError)
+    } finally {
+      setJudging(false)
+    }
+  }
+
   return (
     <AppLayout breadcrumbs={[{ label: 'AI Gateway' }, { label: r.title }]}>
       <ApiStateBanner loading={loading} error={error} />
@@ -113,12 +143,15 @@ export function RoutingPage() {
         <section className="section card">
           <div className="card__header">
             <h2 className="card__title">{r.observationTitle}</h2>
-            <Badge variant={config?.mode === 'ACTIVE' ? 'success' : 'warning'}>
+            <Badge variant={config?.mode === 'ACTIVE' ? 'success' : config?.mode === 'CANARY' ? 'info' : 'warning'}>
               {config?.mode ?? '—'}
             </Badge>
           </div>
           <div className="card__body">
             <p className="muted">{r.shadowPanelDesc}</p>
+            <p className="muted">{r.divergenceExpected}</p>
+            <p className="muted">{r.qualityHumanLoop}</p>
+            <p className="muted">{r.economyLocalNote}</p>
             <div className="form-row" style={{ marginBottom: '0.75rem' }}>
               <label className="form-label" htmlFor="stats-days">{r.statsPeriod}</label>
               <select
@@ -142,6 +175,24 @@ export function RoutingPage() {
                   <dt>{r.divergencePct}</dt>
                   <dd className="mono">{stats.divergencePct}%</dd>
                 </div>
+                {typeof stats.judgeReadyDisagreements === 'number' && (
+                  <div>
+                    <dt>{r.judgeReady}</dt>
+                    <dd className="mono">{stats.judgeReadyDisagreements}</dd>
+                  </div>
+                )}
+                {typeof stats.canaryLive === 'number' && (
+                  <div>
+                    <dt>{r.canaryLive}</dt>
+                    <dd className="mono">{stats.canaryLive}</dd>
+                  </div>
+                )}
+                {typeof stats.canaryHoldout === 'number' && (
+                  <div>
+                    <dt>{r.canaryHoldout}</dt>
+                    <dd className="mono">{stats.canaryHoldout}</dd>
+                  </div>
+                )}
                 <div>
                   <dt>{r.appliedCost}</dt>
                   <dd className="mono">{stats.appliedCostEur.toFixed(4)} €</dd>
@@ -154,8 +205,49 @@ export function RoutingPage() {
                   <dt>{r.potentialSaving}</dt>
                   <dd className="mono">{stats.potentialSavingEur.toFixed(4)} €</dd>
                 </div>
+                {typeof stats.realizedSavingEur === 'number' && (
+                  <div>
+                    <dt>{r.realizedSaving}</dt>
+                    <dd className="mono">{stats.realizedSavingEur.toFixed(4)} €</dd>
+                  </div>
+                )}
+                {typeof stats.judgedCount === 'number' && (
+                  <div>
+                    <dt>{r.judged}</dt>
+                    <dd className="mono">{stats.judgedCount}</dd>
+                  </div>
+                )}
+                {typeof stats.judgeProposedWins === 'number' && (
+                  <div>
+                    <dt>{r.judgeProposedWins}</dt>
+                    <dd className="mono">{stats.judgeProposedWins}</dd>
+                  </div>
+                )}
+                {typeof stats.judgeAppliedWins === 'number' && (
+                  <div>
+                    <dt>{r.judgeAppliedWins}</dt>
+                    <dd className="mono">{stats.judgeAppliedWins}</dd>
+                  </div>
+                )}
+                {typeof stats.judgeTies === 'number' && (
+                  <div>
+                    <dt>{r.judgeTies}</dt>
+                    <dd className="mono">{stats.judgeTies}</dd>
+                  </div>
+                )}
               </dl>
             )}
+            <p className="muted" style={{ marginTop: '0.75rem' }}>{r.judgeDesc}</p>
+            <p className="muted">{r.realizedSavingHint}</p>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => void onJudgeRun()}
+              disabled={judging || loading}
+              style={{ marginTop: '0.5rem' }}
+            >
+              {judging ? r.judging : r.judgeRun}
+            </button>
             {stats && Object.keys(stats.selectedModelDistribution).length > 0 && (
               <div style={{ marginTop: '0.75rem' }}>
                 <h3 className="card__subtitle">{r.distribution}</h3>
@@ -166,6 +258,55 @@ export function RoutingPage() {
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="section card">
+          <div className="card__header">
+            <h2 className="card__title">{r.qualityTitle}</h2>
+            <Badge variant={modelQuality?.overallQualityStatus === 'MEASURED' ? 'info' : 'warning'}>
+              {modelQuality?.overallQualityStatus === 'MEASURED'
+                ? r.qualityMeasured
+                : r.qualityNotMeasured}
+            </Badge>
+          </div>
+          <div className="card__body">
+            <p className="muted">{r.qualityDesc}</p>
+            {modelQuality && modelQuality.models.length === 0 && (
+              <p className="muted">{r.qualityEmpty}</p>
+            )}
+            {modelQuality && modelQuality.models.length > 0 && (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>{r.colModel}</th>
+                      <th>{r.qualityUps}</th>
+                      <th>{r.qualityDowns}</th>
+                      <th>{r.qualityVolume}</th>
+                      <th>{r.qualityUpRatio}</th>
+                      <th>{r.qualityOverall}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modelQuality.models.map((row) => (
+                      <tr key={row.modelName}>
+                        <td className="mono">{row.modelName}</td>
+                        <td className="mono">{row.ups}</td>
+                        <td className="mono">{row.downs}</td>
+                        <td className="mono">{row.volume}</td>
+                        <td className="mono">
+                          {row.upRatio == null ? '—' : `${(row.upRatio * 100).toFixed(0)}%`}
+                        </td>
+                        <td>
+                          {row.qualityStatus === 'MEASURED' ? r.qualityMeasured : r.qualityNotMeasured}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
@@ -193,10 +334,29 @@ export function RoutingPage() {
                   onChange={(e) => setForm((f) => ({ ...f, mode: e.target.value as RoutingMode }))}
                 >
                   <option value="SHADOW">SHADOW</option>
+                  <option value="CANARY">CANARY</option>
                   <option value="ACTIVE">ACTIVE</option>
                 </select>
               </label>
               {form.mode === 'ACTIVE' && <p className="muted">{r.activateWarning}</p>}
+              {form.mode === 'CANARY' && (
+                <>
+                  <p className="muted">{r.canaryHint}</p>
+                  <label className="guard-form__row">
+                    <span>{r.canaryPercent}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      className="form-input"
+                      value={form.canaryPercent ?? 10}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, canaryPercent: Number(e.target.value) }))
+                      }
+                    />
+                  </label>
+                </>
+              )}
               <label className="guard-form__row">
                 <span>{r.profile}</span>
                 <select

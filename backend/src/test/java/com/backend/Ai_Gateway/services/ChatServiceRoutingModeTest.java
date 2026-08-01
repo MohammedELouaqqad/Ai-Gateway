@@ -2,15 +2,18 @@ package com.backend.Ai_Gateway.services;
 
 import com.backend.Ai_Gateway.config.RoutingProperties;
 import com.backend.Ai_Gateway.entity.Conversation;
+import com.backend.Ai_Gateway.entity.Message;
 import com.backend.Ai_Gateway.entity.Model;
 import com.backend.Ai_Gateway.entity.Provider;
 import com.backend.Ai_Gateway.entity.User;
+import com.backend.Ai_Gateway.enums.MessageRole;
 import com.backend.Ai_Gateway.enums.ProviderType;
 import com.backend.Ai_Gateway.enums.RequestStatus;
 import com.backend.Ai_Gateway.provider.LLMProviderRouter;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.repositories.ConversationRepository;
 import com.backend.Ai_Gateway.repositories.UserRepository;
+import com.backend.Ai_Gateway.services.dto.UsageLogEntry;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
 import com.backend.Ai_Gateway.services.guardrails.GuardAdmission;
 import com.backend.Ai_Gateway.services.routing.RoutingDecision;
@@ -28,8 +31,10 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
@@ -47,6 +52,7 @@ class ChatServiceRoutingModeTest {
     @Mock UsageGuardService usageGuardService;
     @Mock LLMProviderRouter llmProviderRouter;
     @Mock RoutingService routingService;
+    @Mock MessageFeedbackService messageFeedbackService;
 
     private ChatService chatService;
     private Model defaultModel;
@@ -57,6 +63,9 @@ class ChatServiceRoutingModeTest {
     @BeforeEach
     void setUp() {
         lenient().when(usageGuardService.assertAllowed(anyLong(), any(), any())).thenReturn(GuardAdmission.empty());
+        lenient().when(routingService.persistAndMeter(
+                        any(), anyLong(), anyString(), anyBoolean(), any(), anyLong(), anyLong()))
+                .thenReturn(99L);
         chatService = new ChatService(
                 conversationRepository,
                 userRepository,
@@ -66,7 +75,8 @@ class ChatServiceRoutingModeTest {
                 usageService,
                 usageGuardService,
                 llmProviderRouter,
-                routingService
+                routingService,
+                messageFeedbackService
         );
 
         User user = new User();
@@ -82,7 +92,19 @@ class ChatServiceRoutingModeTest {
         conversation.setId(30L);
         conversation.setUser(user);
         when(conversationService.createConversation(1L)).thenReturn(conversation);
-        when(messageService.getMessagesByConversationId(1L, 30L)).thenReturn(List.of());
+
+        Message userMsg = new Message();
+        userMsg.setId(40L);
+        userMsg.setRole(MessageRole.USER);
+        when(messageService.createUserMessage(any(), eq(30L), eq(1L))).thenReturn(userMsg);
+        when(messageService.getMessagesByConversationId(1L, 30L)).thenReturn(List.of(userMsg));
+        when(messageService.createAssistantMessage(any(), eq(30L), eq(1L), any())).thenAnswer(inv -> {
+            Message a = new Message();
+            a.setId(50L);
+            a.setRole(MessageRole.ASSISTANT);
+            a.setContent(inv.getArgument(0));
+            return a;
+        });
     }
 
     @Test
@@ -91,6 +113,7 @@ class ChatServiceRoutingModeTest {
         cfg.setEnabled(true);
         cfg.setMode(RoutingProperties.Mode.SHADOW);
         when(routingService.effectiveConfig()).thenReturn(cfg);
+        when(routingService.shouldApplyLiveWinner(eq(30L), eq(1L))).thenReturn(false);
         when(routingService.decide(eq(1L), anyInt(), eq(false))).thenReturn(decision(
                 RoutingProperties.Mode.SHADOW, "gpt-4o-mini", 21L));
         when(modelService.resolveActiveModel(null)).thenReturn(defaultModel);
@@ -99,12 +122,17 @@ class ChatServiceRoutingModeTest {
         chatService.handleChat(1L, new UserChatRequest(null, "hello auto", null, false));
 
         verify(llmProviderRouter).chat(eq(ollama), any());
-        ArgumentCaptor<String> reason = ArgumentCaptor.forClass(String.class);
-        verify(usageService).logChatUsage(
-                eq(1L), eq(20L), eq(1), eq(1), anyLong(), eq(RequestStatus.SUCCESS),
-                reason.capture(), eq("SHADOW"), eq("ECONOMY"), eq("gpt-4o-mini"));
-        assertThat(reason.getValue()).isEqualTo("shadow_default");
-        verify(routingService).persistAndMeter(any(), eq(1L), eq("llama3.2:1b"), eq(true));
+        ArgumentCaptor<UsageLogEntry> usage = ArgumentCaptor.forClass(UsageLogEntry.class);
+        verify(usageService).logChatUsage(usage.capture());
+        assertThat(usage.getValue().routingAppliedReason()).isEqualTo("shadow_default");
+        assertThat(usage.getValue().status()).isEqualTo(RequestStatus.SUCCESS);
+        assertThat(usage.getValue().modelId()).isEqualTo(20L);
+        assertThat(usage.getValue().routingMode()).isEqualTo("SHADOW");
+        assertThat(usage.getValue().routingProfile()).isEqualTo("ECONOMY");
+        assertThat(usage.getValue().routingSelectedModel()).isEqualTo("gpt-4o-mini");
+        verify(routingService).persistAndMeter(
+                any(), eq(1L), eq("llama3.2:1b"), eq(true), eq("hello auto"), eq(30L), eq(40L));
+        verify(routingService).attachAppliedResponse(eq(99L), eq(50L), eq("ok"), eq(1), eq(1));
     }
 
     @Test
@@ -113,6 +141,7 @@ class ChatServiceRoutingModeTest {
         cfg.setEnabled(true);
         cfg.setMode(RoutingProperties.Mode.ACTIVE);
         when(routingService.effectiveConfig()).thenReturn(cfg);
+        when(routingService.shouldApplyLiveWinner(eq(30L), eq(1L))).thenReturn(true);
         when(routingService.decide(eq(1L), anyInt(), eq(false))).thenReturn(decision(
                 RoutingProperties.Mode.ACTIVE, "gpt-4o-mini", 21L));
         when(routingService.resolveModelEntity("gpt-4o-mini")).thenReturn(winnerModel);
@@ -122,12 +151,16 @@ class ChatServiceRoutingModeTest {
         chatService.handleChat(1L, new UserChatRequest(null, "hello auto", null, false));
 
         verify(llmProviderRouter).chat(eq(openai), any());
-        ArgumentCaptor<String> reason = ArgumentCaptor.forClass(String.class);
-        verify(usageService).logChatUsage(
-                eq(1L), eq(21L), eq(2), eq(2), anyLong(), eq(RequestStatus.SUCCESS),
-                reason.capture(), eq("ACTIVE"), eq("ECONOMY"), eq("gpt-4o-mini"));
-        assertThat(reason.getValue()).isEqualTo("active_winner");
-        verify(routingService).persistAndMeter(any(), eq(1L), eq("gpt-4o-mini"), eq(false));
+        ArgumentCaptor<UsageLogEntry> usage = ArgumentCaptor.forClass(UsageLogEntry.class);
+        verify(usageService).logChatUsage(usage.capture());
+        assertThat(usage.getValue().routingAppliedReason()).isEqualTo("active_winner");
+        assertThat(usage.getValue().status()).isEqualTo(RequestStatus.SUCCESS);
+        assertThat(usage.getValue().modelId()).isEqualTo(21L);
+        assertThat(usage.getValue().routingMode()).isEqualTo("ACTIVE");
+        assertThat(usage.getValue().routingProfile()).isEqualTo("ECONOMY");
+        assertThat(usage.getValue().routingSelectedModel()).isEqualTo("gpt-4o-mini");
+        verify(routingService).persistAndMeter(
+                any(), eq(1L), eq("gpt-4o-mini"), eq(false), eq("hello auto"), eq(30L), eq(40L));
     }
 
     private static RoutingDecision decision(RoutingProperties.Mode mode, String selected, Long id) {

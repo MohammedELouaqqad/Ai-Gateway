@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Pencil, Trash2 } from 'lucide-react'
+import { Pencil, RefreshCw, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react'
 import { AppLayout } from '../layouts/AppLayout'
 import { ApiStateBanner } from '../components/ApiStateBanner'
 import { sendChatStream } from '../api/chat'
@@ -10,9 +10,10 @@ import {
   fetchMessages,
   renameConversation,
 } from '../api/conversations'
+import { clearMessageFeedback, regenerateMessage, submitMessageFeedback } from '../api/feedback'
 import { fetchModels } from '../api/models'
 import { fetchPromptTemplates } from '../api/promptTemplates'
-import type { ApiConversation, ApiMessage, ApiModel, ApiPromptTemplate } from '../api/types'
+import type { ApiConversation, ApiMessage, ApiModel, ApiPromptTemplate, FeedbackRating } from '../api/types'
 import { useI18n } from '../i18n'
 import {
   applyPromptTemplate,
@@ -72,6 +73,43 @@ export function ChatPage() {
     && selectableModels.length > 0
     && !inputOverLimit
   const canApplyTemplate = !sending && !!selectedTemplateId
+
+  async function handleFeedback(messageId: number, rating: FeedbackRating) {
+    const current = messages.find((m) => m.id === messageId)?.myFeedback ?? null
+    const next: FeedbackRating | null = current === rating ? null : rating
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, myFeedback: next } : m)),
+    )
+    try {
+      if (next == null) {
+        await clearMessageFeedback(messageId)
+      } else {
+        await submitMessageFeedback(messageId, next)
+      }
+    } catch {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, myFeedback: current } : m)),
+      )
+      setError(chat.feedbackError)
+    }
+  }
+
+  async function handleRegenerate(messageId: number) {
+    if (sending) return
+    setSending(true)
+    setError(null)
+    try {
+      await regenerateMessage(messageId)
+      if (activeConversationId != null) {
+        const refreshed = await fetchMessages(activeConversationId)
+        setMessages(refreshed)
+      }
+    } catch {
+      setError(chat.regenerateError)
+    } finally {
+      setSending(false)
+    }
+  }
 
   function assistantModelLabel(message: ApiMessage): string | null {
     if (message.role !== 'ASSISTANT') return null
@@ -526,6 +564,42 @@ export function ChatPage() {
                         m.content
                       )}
                 </div>
+                {!isUser && !isSystem && !isStreamingPlaceholder && 'myFeedback' in m && typeof m.id === 'number' && !m.regenerated && (
+                  <div className="chat-message__feedback" role="group" aria-label={chat.feedbackUp}>
+                    <button
+                      type="button"
+                      className={`chat-feedback-btn${m.myFeedback === 'UP' ? ' is-active is-up' : ''}`}
+                      title={m.myFeedback === 'UP' ? chat.feedbackClear : chat.feedbackUp}
+                      aria-pressed={m.myFeedback === 'UP'}
+                      disabled={sending}
+                      onClick={() => void handleFeedback(m.id, 'UP')}
+                    >
+                      <ThumbsUp size={14} aria-hidden="true" />
+                      <span className="sr-only">{chat.feedbackUp}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`chat-feedback-btn${m.myFeedback === 'DOWN' ? ' is-active is-down' : ''}`}
+                      title={m.myFeedback === 'DOWN' ? chat.feedbackClear : chat.feedbackDown}
+                      aria-pressed={m.myFeedback === 'DOWN'}
+                      disabled={sending}
+                      onClick={() => void handleFeedback(m.id, 'DOWN')}
+                    >
+                      <ThumbsDown size={14} aria-hidden="true" />
+                      <span className="sr-only">{chat.feedbackDown}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-feedback-btn"
+                      title={chat.regenerateTitle}
+                      disabled={sending}
+                      onClick={() => void handleRegenerate(m.id)}
+                    >
+                      <RefreshCw size={14} aria-hidden="true" />
+                      <span className="sr-only">{chat.regenerate}</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </article>
               )

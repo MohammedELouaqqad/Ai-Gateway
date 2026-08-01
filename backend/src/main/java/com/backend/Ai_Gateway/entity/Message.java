@@ -35,6 +35,13 @@ public class Message {
     @Column(length = 150)
     private String modelDisplayName;
 
+    /** True when the user requested a regeneration of this assistant reply. */
+    @Column(nullable = false)
+    private boolean regenerated = false;
+
+    /** Newer assistant message that replaced this one after regenerate (nullable). */
+    private Long supersededByMessageId;
+
     @JsonIgnore
     @ManyToOne
     private Conversation conversation;

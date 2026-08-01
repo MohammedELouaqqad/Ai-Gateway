@@ -125,6 +125,13 @@ export const fr = {
       ariaChat: 'Interface de chat',
       ariaConversations: 'Conversations',
       ariaMessages: 'Messages',
+      feedbackUp: 'Utile',
+      feedbackDown: 'Pas utile',
+      feedbackClear: 'Retirer mon avis',
+      feedbackError: 'Impossible d’enregistrer l’avis',
+      regenerate: 'Régénérer',
+      regenerateTitle: 'Régénère la réponse (compte comme un avis négatif)',
+      regenerateError: 'Impossible de régénérer',
     },
     authCallback: {
       title: 'Connexion Keycloak',
@@ -346,7 +353,10 @@ export const fr = {
       divergencePct: 'Divergence',
       appliedCost: 'Coût appliqué (est.)',
       selectedCost: 'Coût routé (est.)',
-      potentialSaving: 'Économie potentielle',
+      potentialSaving: 'Économie potentielle (est.)',
+      realizedSaving: 'Économie réalisée',
+      realizedSavingHint:
+        'Coûts réels (tokens) après canary/ACTIVE ou juge — pas les estimations pré-appel.',
       distribution: 'Répartition des modèles hypothétiques',
       configTitle: 'Configuration',
       enabled: 'Routage activé',
@@ -374,6 +384,39 @@ export const fr = {
       colQuality: 'Qualité',
       colSpeed: 'Vitesse',
       colTotal: 'Total',
+      qualityTitle: 'Qualité empirique (thumbs)',
+      qualityDesc:
+        'Signal réel des utilisateurs. Sans vote : NOT_MEASURED — jamais un statut vert. Le score qualité YAML reste une préférence statique, pas une mesure.',
+      qualityOverall: 'Statut global',
+      qualityNotMeasured: 'NOT_MEASURED',
+      qualityMeasured: 'MEASURED',
+      qualityUps: '👍',
+      qualityDowns: '👎',
+      qualityVolume: 'Volume',
+      qualityUpRatio: 'Ratio 👍',
+      qualityEmpty: 'Aucun avis utilisateur pour le moment.',
+      qualityHumanLoop:
+        'Boucle humaine : les pouces et le juge accumulent des preuves — ils ne mettent pas à jour automatiquement les scores qualité du routage. Un admin ajuste le YAML après revue.',
+      divergenceExpected:
+        'En SHADOW, une divergence élevée est NORMALE (gagnant ≠ défaut) — ce n’est pas un échec qualité.',
+      canaryPercent: 'Canary % (sticky conversation)',
+      canaryHint:
+        'Seul X% des conversations (hash stable) utilise le gagnant ; le reste reste sur le défaut. Augmenter le % est monotone — les chats déjà live restent live.',
+      judgeReady: 'Désaccords prêts pour juge',
+      judgeRun: 'Lancer un lot juge',
+      judging: 'Juge en cours…',
+      judgeDesc:
+        'Compare la réponse appliquée stockée à un seul run du modèle proposé. Ne rappelle pas le modèle appliqué. Les verdicts individuels sont bruités — ne faire confiance qu’aux agrégats.',
+      judged: 'Jugés',
+      judgeProposedWins: 'Victoires proposées',
+      judgeAppliedWins: 'Victoires appliquées',
+      judgeTies: 'Égalités',
+      canaryLive: 'Canary live',
+      canaryHoldout: 'Canary holdout',
+      activateCanaryWarning:
+        'CANARY active le routage live pour un % sticky de conversations. Confirmez après revue des stats.',
+      economyLocalNote:
+        'ECONOMY donne un score coût parfait aux modèles gratuits/locaux (€0) par conception — ils gagnent en général s’ils sont disponibles.',
     },
     rateLimit: {
       title: 'Limitation',

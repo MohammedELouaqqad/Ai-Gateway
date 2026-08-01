@@ -12,6 +12,8 @@ public class RoutingProperties {
 
     public enum Mode {
         SHADOW,
+        /** Sticky percent of conversations get live winner; rest stay on default. */
+        CANARY,
         ACTIVE
     }
 
@@ -24,6 +26,8 @@ public class RoutingProperties {
 
     private boolean enabled = true;
     private Mode mode = Mode.SHADOW;
+    /** 0–100, used only when mode=CANARY. Sticky by conversationId (fallback userId). */
+    private int canaryPercent = 10;
     private Profile profile = Profile.BALANCED;
     private int maxRetries = 1;
     private long retryBackoffMs = 200;
@@ -31,6 +35,19 @@ public class RoutingProperties {
     private Map<String, Integer> contextWindows = new HashMap<>();
     private Map<String, ModelScore> modelScores = new HashMap<>();
     private Map<String, ProfileWeights> profiles = defaultProfiles();
+    private Judge judge = new Judge();
+    private Privacy privacy = new Privacy();
+    /**
+     * Absolute € ceiling for costScore on a typical request estimate.
+     * 0 = derive from max estimated cost across the full model catalog (not only survivors),
+     * so disabling one expensive model does not reshuffle others' cost scores.
+     */
+    private double costScoreCeilingEur = 0;
+    /**
+     * Quality feedback contract: measured thumbs/judge never auto-write modelScores.quality.
+     * Humans adjust YAML / runtime scores after reviewing evidence.
+     */
+    private String qualityFeedbackLoop = "HUMAN_IN_THE_LOOP";
 
     public boolean isEnabled() {
         return enabled;
@@ -54,6 +71,14 @@ public class RoutingProperties {
             return;
         }
         this.mode = Mode.valueOf(mode.trim().toUpperCase(Locale.ROOT));
+    }
+
+    public int getCanaryPercent() {
+        return canaryPercent;
+    }
+
+    public void setCanaryPercent(int canaryPercent) {
+        this.canaryPercent = Math.max(0, Math.min(100, canaryPercent));
     }
 
     public Profile getProfile() {
@@ -143,6 +168,40 @@ public class RoutingProperties {
         return w != null ? w : defaultProfiles().get(Profile.BALANCED.name());
     }
 
+    public Judge getJudge() {
+        return judge;
+    }
+
+    public void setJudge(Judge judge) {
+        this.judge = judge != null ? judge : new Judge();
+    }
+
+    public Privacy getPrivacy() {
+        return privacy;
+    }
+
+    public void setPrivacy(Privacy privacy) {
+        this.privacy = privacy != null ? privacy : new Privacy();
+    }
+
+    public double getCostScoreCeilingEur() {
+        return costScoreCeilingEur;
+    }
+
+    public void setCostScoreCeilingEur(double costScoreCeilingEur) {
+        this.costScoreCeilingEur = Math.max(0, costScoreCeilingEur);
+    }
+
+    public String getQualityFeedbackLoop() {
+        return qualityFeedbackLoop;
+    }
+
+    public void setQualityFeedbackLoop(String qualityFeedbackLoop) {
+        this.qualityFeedbackLoop = qualityFeedbackLoop != null && !qualityFeedbackLoop.isBlank()
+                ? qualityFeedbackLoop.trim()
+                : "HUMAN_IN_THE_LOOP";
+    }
+
     private static Map<String, ProfileWeights> defaultProfiles() {
         Map<String, ProfileWeights> map = new LinkedHashMap<>();
         map.put("ECONOMY", new ProfileWeights(0.70, 0.15, 0.15));
@@ -212,6 +271,79 @@ public class RoutingProperties {
 
         public void setSpeed(double speed) {
             this.speed = speed;
+        }
+    }
+
+    /** Phase 2 disagreement judge — proposed model once vs stored applied answer. */
+    public static class Judge {
+        private boolean enabled = true;
+        /** Max disagreements to process per /judge/run call. */
+        private int batchSize = 5;
+        /**
+         * When true, ask a cheap compare model for PROPOSED|APPLIED|TIE.
+         * When false, use a deterministic heuristic (no extra LLM).
+         */
+        private boolean llmCompare = false;
+        /** Optional compare model name; null → default active model. */
+        private String compareModel;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getBatchSize() {
+            return batchSize;
+        }
+
+        public void setBatchSize(int batchSize) {
+            this.batchSize = Math.max(1, Math.min(50, batchSize));
+        }
+
+        public boolean isLlmCompare() {
+            return llmCompare;
+        }
+
+        public void setLlmCompare(boolean llmCompare) {
+            this.llmCompare = llmCompare;
+        }
+
+        public String getCompareModel() {
+            return compareModel;
+        }
+
+        public void setCompareModel(String compareModel) {
+            this.compareModel = compareModel;
+        }
+    }
+
+    /**
+     * Prompt/response snapshots are user content (GDPR). Store only when needed for judge,
+     * then purge after judgment or retention window.
+     */
+    public static class Privacy {
+        /** Keep snapshots this many days (unjudged or residual). */
+        private int snapshotRetentionDays = 14;
+        /** Clear prompt/response text immediately after a successful judge run. */
+        private boolean clearSnapshotsAfterJudge = true;
+
+        public int getSnapshotRetentionDays() {
+            return snapshotRetentionDays;
+        }
+
+        public void setSnapshotRetentionDays(int snapshotRetentionDays) {
+            this.snapshotRetentionDays = Math.max(1, Math.min(365, snapshotRetentionDays));
+        }
+
+        public boolean isClearSnapshotsAfterJudge() {
+            return clearSnapshotsAfterJudge;
+        }
+
+        public void setClearSnapshotsAfterJudge(boolean clearSnapshotsAfterJudge) {
+            this.clearSnapshotsAfterJudge = clearSnapshotsAfterJudge;
         }
     }
 }
