@@ -37,6 +37,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -75,7 +76,8 @@ class ChatServiceStreamTest {
                 usageGuardService,
                 llmProviderRouter,
                 routingService,
-                messageFeedbackService
+                messageFeedbackService,
+                new ChatExecutor(llmProviderRouter, routingService)
         );
 
         User user = new User();
@@ -153,5 +155,40 @@ class ChatServiceStreamTest {
         assertEquals(0, entry.completionTokens());
         assertEquals(RequestStatus.ERROR, entry.status());
         assertEquals("explicit", entry.routingAppliedReason());
+    }
+
+    @Test
+    void handleChatStream_usesSingleModel_neverCallsSyncChatOrSecondProvider() {
+        when(llmProviderRouter.stream(eq(provider), any())).thenReturn(Flux.just(
+                ChatChunk.delta("ok"),
+                ChatChunk.completed("stop", ChatChunk.TokenUsage.of(1, 1))
+        ));
+
+        chatService.handleChatStream(1L, new UserChatRequest(null, "hi", "qwen", true));
+
+        verify(llmProviderRouter, timeout(3000).times(1)).stream(eq(provider), any());
+        verify(llmProviderRouter, never()).chat(any(), any());
+        verify(usageGuardService, timeout(3000)).confirmBudgetReservation(reservation, model, 1, 1);
+    }
+
+    @Test
+    void handleChatStream_errorAfterBytes_releasesBudgetOnce_neverConfirms() {
+        when(llmProviderRouter.stream(eq(provider), any())).thenReturn(
+                Flux.concat(
+                        Flux.just(ChatChunk.delta("partial")),
+                        Flux.error(new RuntimeException("mid-stream failure"))
+                )
+        );
+
+        chatService.handleChatStream(1L, new UserChatRequest(null, "hi", "qwen", true));
+
+        verify(usageGuardService, timeout(3000).times(1)).releaseBudgetReservation(reservation);
+        verify(usageGuardService, never()).confirmBudgetReservation(any(), any(), anyInt(), anyInt());
+        verify(messageService, never()).createAssistantMessage(any(), anyLong(), anyLong(), any());
+        ArgumentCaptor<UsageLogEntry> usage = ArgumentCaptor.forClass(UsageLogEntry.class);
+        verify(usageService, timeout(3000)).logChatUsage(usage.capture());
+        assertEquals(RequestStatus.ERROR, usage.getValue().status());
+        verify(llmProviderRouter, timeout(3000).times(1)).stream(eq(provider), any());
+        verify(llmProviderRouter, never()).chat(any(), any());
     }
 }

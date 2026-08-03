@@ -76,7 +76,8 @@ class ChatServiceRoutingModeTest {
                 usageGuardService,
                 llmProviderRouter,
                 routingService,
-                messageFeedbackService
+                messageFeedbackService,
+                new ChatExecutor(llmProviderRouter, routingService)
         );
 
         User user = new User();

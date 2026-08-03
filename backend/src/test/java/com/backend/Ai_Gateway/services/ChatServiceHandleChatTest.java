@@ -70,7 +70,8 @@ class ChatServiceHandleChatTest {
                 usageGuardService,
                 llmProviderRouter,
                 routingService,
-                messageFeedbackService
+                messageFeedbackService,
+                new ChatExecutor(llmProviderRouter, routingService)
         );
     }
 

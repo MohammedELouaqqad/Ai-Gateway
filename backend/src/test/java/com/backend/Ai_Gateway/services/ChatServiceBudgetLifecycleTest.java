@@ -70,7 +70,8 @@ class ChatServiceBudgetLifecycleTest {
                 usageGuardService,
                 llmProviderRouter,
                 routingService,
-                messageFeedbackService
+                messageFeedbackService,
+                new ChatExecutor(llmProviderRouter, routingService)
         );
 
         provider = new Provider();
