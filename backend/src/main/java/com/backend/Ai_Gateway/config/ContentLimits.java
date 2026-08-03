@@ -28,4 +28,7 @@ public final class ContentLimits {
      * Les messages les plus anciens sont tronqués en premier.
      */
     public static final int CHAT_CONTEXT_CHAR_BUDGET = 120_000;
+
+    /** Nom d'une clé API */
+    public static final int API_KEY_NAME_MAX = 100;
 }

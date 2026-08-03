@@ -19,7 +19,7 @@ public class ApiKey {
     private Long id;
 
     private String keyHash;
-    private String KeyPrefix;
+    private String keyPrefix;
     private String name;
     private boolean enabled;
     private Instant createdAt;

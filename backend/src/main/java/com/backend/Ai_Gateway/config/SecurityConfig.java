@@ -1,8 +1,11 @@
 package com.backend.Ai_Gateway.config;
 
+import com.backend.Ai_Gateway.services.ApiKeyService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
@@ -16,6 +19,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -27,7 +31,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * OAuth2 Resource Server (Keycloak JWT) — stack Servlet/MVC.
+ * OAuth2 Resource Server (Keycloak JWT) for {@code /api/**} + API-key auth for
+ * {@code /v1/**} (OpenAI-compatible surface) — two independent filter chains.
  */
 @Configuration
 @EnableWebSecurity
@@ -37,7 +42,37 @@ public class SecurityConfig {
     @Value("${app.cors.allowed-origins:http://localhost:5173}")
     private String allowedOrigins;
 
+    /**
+     * {@code /v1/**} — API-key only, evaluated first. Kept separate from the JWT chain
+     * below so external OpenAI-compatible clients never need a Keycloak session.
+     */
     @Bean
+    @Order(1)
+    public SecurityFilterChain apiKeySecurityFilterChain(
+            HttpSecurity http,
+            ApiKeyService apiKeyService,
+            ObjectMapper objectMapper
+    ) throws Exception {
+        ApiKeyAuthFilter apiKeyAuthFilter = new ApiKeyAuthFilter(apiKeyService);
+        http
+                .securityMatcher("/v1/**")
+                .csrf(csrf -> csrf.disable())
+                .cors(Customizer.withDefaults())
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .anyRequest().authenticated()
+                )
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(new ApiKeyAuthenticationEntryPoint(objectMapper)))
+                .addFilterBefore(apiKeyAuthFilter, UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
+
+    /** {@code /api/**} and everything else — unchanged Keycloak JWT resource server. */
+    @Bean
+    @Order(2)
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
