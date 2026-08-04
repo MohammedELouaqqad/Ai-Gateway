@@ -40,6 +40,17 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
+    /**
+     * SSE streaming (/v1/chat/completions with stream:true) re-enters the filter chain on
+     * Spring's async dispatch to write the body. OncePerRequestFilter's default here is
+     * true (skip async re-dispatch) — that left SecurityContext empty on the second pass
+     * and 403'd every streaming response after the first bytes were already committed.
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
     private void authenticate(ApiKey apiKey) {
         SecurityContextHolder.getContext()
                 .setAuthentication(new ApiKeyAuthenticationToken(apiKey.getUser().getId()));
