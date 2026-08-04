@@ -14,6 +14,7 @@ import com.backend.Ai_Gateway.provider.mapper.OpenAiChunkMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -21,10 +22,13 @@ import reactor.core.publisher.Flux;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Shared OpenAI chat/completions + SSE implementation.
- * Supports OPENAI, AZURE_OPENAI, and future OpenAI-compatible backends.
+ * Supports OPENAI, AZURE_OPENAI, and future OpenAI-compatible backends. Per-provider
+ * differences (auth scheme, base URL, model reference) are extension points below —
+ * a subclass must never re-implement {@link #chat} / {@link #stream} itself.
  */
 public abstract class OpenAiCompatibleProvider implements LLMProvider {
 
@@ -44,20 +48,19 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
 
     @Override
     public ChatResponse chat(Provider provider, ChatRequest request) {
-        String apiKey = resolveApiKey(provider);
-        String baseUrl = resolveBaseUrl(provider.getBaseUrl(), defaultBaseUrl());
+        String baseUrl = resolveBaseUrl(provider.getBaseUrl(), this::defaultBaseUrl);
         List<OpenAIMessage> messages = request.messages().stream()
                 .map(this::toOpenAiMessage)
                 .toList();
 
-        RestClient client = restClientBuilder
+        RestClient client = restClientBuilder.clone()
                 .baseUrl(baseUrl)
-                .defaultHeader("Authorization", "Bearer " + apiKey)
+                .defaultHeaders(headers -> applyAuth(provider, headers))
                 .build();
 
         OpenAIChatResponse response = client.post()
                 .uri("/chat/completions")
-                .body(new OpenAIChatRequest(request.model(), messages))
+                .body(new OpenAIChatRequest(resolveModelRef(provider, request), messages))
                 .retrieve()
                 .body(OpenAIChatResponse.class);
 
@@ -78,15 +81,14 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
 
     @Override
     public Flux<ChatChunk> stream(Provider provider, ChatRequest request) {
-        String apiKey = resolveApiKey(provider);
-        String baseUrl = resolveBaseUrl(provider.getBaseUrl(), defaultBaseUrl());
+        String baseUrl = resolveBaseUrl(provider.getBaseUrl(), this::defaultBaseUrl);
         List<OpenAIMessage> messages = request.messages().stream()
                 .map(this::toOpenAiMessage)
                 .toList();
 
-        WebClient client = webClientBuilder
+        WebClient client = webClientBuilder.clone()
                 .baseUrl(baseUrl)
-                .defaultHeader("Authorization", "Bearer " + apiKey)
+                .defaultHeaders(headers -> applyAuth(provider, headers))
                 .build();
 
         // IMPORTANT: do NOT Accept text/event-stream here — Spring's SSE codec would strip
@@ -98,7 +100,7 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
                 .uri("/chat/completions")
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON, MediaType.ALL)
-                .bodyValue(OpenAIStreamChatRequest.of(request.model(), messages))
+                .bodyValue(OpenAIStreamChatRequest.of(resolveModelRef(provider, request), messages))
                 .retrieve()
                 .bodyToFlux(DataBuffer.class)
                 .map(this::dataBufferToString)
@@ -115,9 +117,21 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
                 .filter(chunk -> chunk.done() || (chunk.content() != null && !chunk.content().isEmpty()));
     }
 
+    /** Only called when {@code Provider.baseUrl} is unset — may throw if this family has no sane default. */
     protected abstract String defaultBaseUrl();
 
     protected abstract String resolveApiKey(Provider provider);
+
+    /** Sets whatever auth scheme this family member uses (Bearer, {@code api-key}, none…). */
+    protected abstract void applyAuth(Provider provider, HttpHeaders headers);
+
+    /**
+     * Model identifier sent in the request body. Default = identity (the {@code Model.name}
+     * row as-is). Override only if a family member needs a different mapping.
+     */
+    protected String resolveModelRef(Provider provider, ChatRequest request) {
+        return request.model();
+    }
 
     private String dataBufferToString(DataBuffer dataBuffer) {
         try {
@@ -147,10 +161,15 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
         return new OpenAIMessage(role, message.content());
     }
 
-    private String resolveBaseUrl(String providerBaseUrl, String fallback) {
+    /**
+     * {@code fallback} is a {@link Supplier}, not a plain value: some family members
+     * (e.g. Azure) have no sane default and throw from {@link #defaultBaseUrl()} — it must
+     * only be evaluated when {@code Provider.baseUrl} is actually missing.
+     */
+    private String resolveBaseUrl(String providerBaseUrl, Supplier<String> fallback) {
         if (providerBaseUrl != null && !providerBaseUrl.isBlank()) {
             return providerBaseUrl.trim().replaceAll("/$", "");
         }
-        return fallback;
+        return fallback.get();
     }
 }

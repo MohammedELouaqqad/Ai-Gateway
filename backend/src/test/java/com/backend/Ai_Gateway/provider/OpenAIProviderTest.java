@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class OpenAIProviderTest {
 
     @Test
-    void types_coverOpenAiAndAzureOpenAi() {
+    void types_coversOpenAiOnly() {
         OpenAIProvider provider = new OpenAIProvider(
                 RestClient.builder(),
                 WebClient.builder(),
@@ -19,9 +19,6 @@ class OpenAIProviderTest {
                 "test-key"
         );
 
-        assertThat(provider.types()).containsExactlyInAnyOrder(
-                ProviderType.OPENAI,
-                ProviderType.AZURE_OPENAI
-        );
+        assertThat(provider.types()).containsExactly(ProviderType.OPENAI);
     }
 }
