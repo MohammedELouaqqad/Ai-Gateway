@@ -81,7 +81,8 @@ public class V1ChatService {
             persistSuccess(userId, ok.model(), ok.response(), latencyMs);
             return new SyncResult(ok.model(), ok.response());
         } catch (ChatExecutionFailedException ex) {
-            persistError(userId, ex.failedModelId(), System.currentTimeMillis() - startedAt);
+            persistError(userId, ex.failedModelId(), System.currentTimeMillis() - startedAt,
+                    ex.causeAsRuntime().getClass().getSimpleName());
             throw ex.causeAsRuntime();
         } finally {
             if (!budgetSettled) {
@@ -133,7 +134,7 @@ public class V1ChatService {
         emitter.onTimeout(() -> {
             cancelUpstream.run();
             releaseBudgetIfNeeded.run();
-            persistError(userId, model.getId(), System.currentTimeMillis() - startedAt);
+            persistError(userId, model.getId(), System.currentTimeMillis() - startedAt, "timeout");
             emitter.complete();
         });
         emitter.onError(ex -> {
@@ -162,7 +163,8 @@ public class V1ChatService {
                         },
                         error -> {
                             releaseBudgetIfNeeded.run();
-                            persistError(userId, model.getId(), System.currentTimeMillis() - startedAt);
+                            persistError(userId, model.getId(), System.currentTimeMillis() - startedAt,
+                                    error.getClass().getSimpleName());
                             emitter.completeWithError(error);
                         },
                         () -> completeStream(
@@ -208,7 +210,7 @@ public class V1ChatService {
             if (budgetDone.compareAndSet(false, true)) {
                 usageGuardService.releaseBudgetReservation(admission.budgetReservation());
             }
-            persistError(userId, model.getId(), System.currentTimeMillis() - startedAt);
+            persistError(userId, model.getId(), System.currentTimeMillis() - startedAt, ex.getClass().getSimpleName());
             emitter.completeWithError(ex);
         }
     }
@@ -230,8 +232,18 @@ public class V1ChatService {
         );
     }
 
-    private void persistError(Long userId, Long modelId, long latencyMs) {
+    private void persistError(Long userId, Long modelId, long latencyMs, String reason) {
         usageService.logChatUsage(UsageLogEntry.error(userId, modelId, latencyMs, "explicit", null, null, null));
+        recordProviderErrorMetric(modelId, reason);
+    }
+
+    /** Best-effort only — a metrics lookup must never break the actual error-reporting path. */
+    private void recordProviderErrorMetric(Long modelId, String reason) {
+        try {
+            usageGuardService.recordFailure(modelService.getById(modelId), reason);
+        } catch (RuntimeException ignored) {
+            // metric only
+        }
     }
 
     private void ensureAdapterAvailable(Model model, boolean streaming) {

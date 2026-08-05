@@ -170,7 +170,7 @@ public class ChatService {
             persistSuccess(userId, used, ok.response(), System.currentTimeMillis() - startedAt);
             return ok.response();
         } catch (ChatExecutionFailedException ex) {
-            logError(userId, ex.failedModelId(), prepared, startedAt);
+            logError(userId, ex.failedModelId(), prepared, startedAt, ex.causeAsRuntime().getClass().getSimpleName());
             throw ex.causeAsRuntime();
         } finally {
             if (!budgetSettled) {
@@ -203,7 +203,7 @@ public class ChatService {
         emitter.onTimeout(() -> {
             cancelUpstream.run();
             releaseBudgetIfNeeded.run();
-            logError(userId, prepared.model().getId(), prepared, startedAt);
+            logError(userId, prepared.model().getId(), prepared, startedAt, "timeout");
             emitter.complete();
         });
         emitter.onError(ex -> {
@@ -275,7 +275,7 @@ public class ChatService {
             Throwable error
     ) {
         releaseBudgetIfNeeded.run();
-        logError(userId, prepared.model().getId(), prepared, startedAt);
+        logError(userId, prepared.model().getId(), prepared, startedAt, error.getClass().getSimpleName());
         emitter.completeWithError(error);
     }
 
@@ -456,9 +456,10 @@ public class ChatService {
 
     /**
      * Logs ERROR usage for the model that failed (may differ from {@code prepared.model()}
-     * after sync fallback attempts).
+     * after sync fallback attempts), and records {@code ai_gateway_provider_errors_total}
+     * so an admin can see which PROVIDER is failing, not just which user got blocked.
      */
-    private void logError(Long userId, Long modelId, PreparedChat prepared, long startedAt) {
+    private void logError(Long userId, Long modelId, PreparedChat prepared, long startedAt, String reason) {
         usageService.logChatUsage(UsageLogEntry.error(
                 userId,
                 modelId,
@@ -468,6 +469,16 @@ public class ChatService {
                 prepared.routingProfile(),
                 prepared.routingSelectedModel()
         ));
+        recordProviderErrorMetric(modelId, reason);
+    }
+
+    /** Best-effort only — a metrics lookup must never break the actual error-reporting path. */
+    private void recordProviderErrorMetric(Long modelId, String reason) {
+        try {
+            usageGuardService.recordFailure(modelService.getById(modelId), reason);
+        } catch (RuntimeException ignored) {
+            // metric only
+        }
     }
 
     /** Avant persistence du message user et avant tout SseEmitter. */

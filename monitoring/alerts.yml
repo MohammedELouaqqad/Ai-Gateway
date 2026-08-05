@@ -9,3 +9,38 @@ groups:
         annotations:
           summary: "Budget global AI Gateway > 80 %"
           description: "Le ratio budget global du jour dépasse 80 % (valeur={{ $value }})."
+
+  # Per-user signals — AiGatewayBudgetGlobalHigh alone can stay quiet while ONE user
+  # loops/burns budget, if the global cap is generous relative to a single user's cap.
+  # Thresholds below are starter values (no real traffic history yet to calibrate
+  # against) — tune once production usage patterns are known.
+  - name: ai-gateway-per-user
+    rules:
+      - alert: AiGatewayUserRateLimitLooping
+        expr: sum by (user) (increase(ai_gateway_requests_blocked_total{reason="rate_limit_minute"}[5m])) > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Un utilisateur cogne le rate limit RPM de façon répétée"
+          description: "user={{ $labels.user }} a été bloqué par RPM {{ $value }} fois sur 5 min — signal le plus rapide d'une boucle (plus rapide que le budget €)."
+
+      - alert: AiGatewayUserBudgetLooping
+        expr: sum by (user) (increase(ai_gateway_requests_blocked_total{reason="budget_user"}[15m])) > 3
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Un utilisateur cogne son plafond budget de façon répétée"
+          description: "user={{ $labels.user }} a été bloqué par budget_user {{ $value }} fois sur 15 min."
+
+  - name: ai-gateway-provider-health
+    rules:
+      - alert: AiGatewayProviderErrorRateHigh
+        expr: sum by (provider) (rate(ai_gateway_provider_errors_total[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Taux d'erreur élevé pour un provider LLM"
+          description: "provider={{ $labels.provider }} : {{ $value }} erreurs/s sur 5 min — voir la santé du provider avant que ça devienne une mauvaise expérience utilisateur."

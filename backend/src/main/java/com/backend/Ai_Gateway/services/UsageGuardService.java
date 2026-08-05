@@ -139,9 +139,9 @@ public class UsageGuardService {
 
         // --- Peek RPM (no consume) ---
         RateLimitResult rpmPeek = rateLimitStore.peekRpm(userId, rpm);
-        handleRateUnavailable(rpmPeek, Reason.RATE_LIMIT_MINUTE, rpm, dayEnd);
+        handleRateUnavailable(userId, rpmPeek, Reason.RATE_LIMIT_MINUTE, rpm, dayEnd);
         if (rpmPeek.outcome() == StoreOutcome.BLOCKED) {
-            block(Reason.RATE_LIMIT_MINUTE,
+            block(userId, Reason.RATE_LIMIT_MINUTE,
                     "Limite vitesse : max " + rpm + " requêtes / minute.",
                     Instant.now().plusSeconds(60));
         }
@@ -150,9 +150,9 @@ public class UsageGuardService {
         long sqlDayCount = usageLogRepository.countByUserIdAndCreatedAtBetween(userId, dayStart, dayEnd);
         rateLimitStore.bootstrapRpdIfAbsent(userId, utcDate, sqlDayCount, rpdTtl);
         RateLimitResult rpdPeek = rateLimitStore.peekRpd(userId, rpd, utcDate);
-        handleRateUnavailable(rpdPeek, Reason.RATE_LIMIT_DAY, rpd, dayEnd);
+        handleRateUnavailable(userId, rpdPeek, Reason.RATE_LIMIT_DAY, rpd, dayEnd);
         if (rpdPeek.outcome() == StoreOutcome.BLOCKED) {
-            block(Reason.RATE_LIMIT_DAY,
+            block(userId, Reason.RATE_LIMIT_DAY,
                     "Limite équité : max " + rpd + " requêtes / jour / utilisateur. Reset à "
                             + dayEnd + " (UTC).",
                     dayEnd);
@@ -183,20 +183,20 @@ public class UsageGuardService {
             if (budgetResult.outcome() == StoreOutcome.UNAVAILABLE) {
                 // Fallback SUM Postgres (never fail-open for paid)
                 if (sqlUserCents + estimatedCents > userCapCents) {
-                    block(Reason.BUDGET_USER, budgetUserMsg(sqlUserCents / 100.0, estimatedEur,
+                    block(userId, Reason.BUDGET_USER, budgetUserMsg(sqlUserCents / 100.0, estimatedEur,
                             cfg.getBudget().getUserPerDayEur(), dayEnd), dayEnd);
                 }
                 if (sqlGlobalCents + estimatedCents > globalCapCents) {
-                    block(Reason.BUDGET_GLOBAL, budgetGlobalMsg(sqlGlobalCents / 100.0, estimatedEur,
+                    block(userId, Reason.BUDGET_GLOBAL, budgetGlobalMsg(sqlGlobalCents / 100.0, estimatedEur,
                             cfg.getBudget().getGlobalPerDayEur(), dayEnd), dayEnd);
                 }
                 reservation = BudgetReservation.none();
             } else if (budgetResult.outcome() == StoreOutcome.BLOCKED) {
                 if (budgetResult.blockCode() == 1) {
-                    block(Reason.BUDGET_USER, budgetUserMsg(budgetResult.userSpentCents() / 100.0,
+                    block(userId, Reason.BUDGET_USER, budgetUserMsg(budgetResult.userSpentCents() / 100.0,
                             estimatedEur, cfg.getBudget().getUserPerDayEur(), dayEnd), dayEnd);
                 }
-                block(Reason.BUDGET_GLOBAL, budgetGlobalMsg(budgetResult.globalSpentCents() / 100.0,
+                block(userId, Reason.BUDGET_GLOBAL, budgetGlobalMsg(budgetResult.globalSpentCents() / 100.0,
                         estimatedEur, cfg.getBudget().getGlobalPerDayEur(), dayEnd), dayEnd);
             } else {
                 reservation = budgetResult.reservation();
@@ -209,10 +209,10 @@ public class UsageGuardService {
             if (!redisProps.getRateLimit().isFailOpen()) {
                 budgetStore.release(reservation);
             }
-            handleRateUnavailable(rpmCommit, Reason.RATE_LIMIT_MINUTE, rpm, dayEnd);
+            handleRateUnavailable(userId, rpmCommit, Reason.RATE_LIMIT_MINUTE, rpm, dayEnd);
         } else if (rpmCommit.outcome() == StoreOutcome.BLOCKED) {
             budgetStore.release(reservation);
-            block(Reason.RATE_LIMIT_MINUTE,
+            block(userId, Reason.RATE_LIMIT_MINUTE,
                     "Limite vitesse : max " + rpm + " requêtes / minute.",
                     Instant.now().plusSeconds(60));
         }
@@ -223,11 +223,11 @@ public class UsageGuardService {
                 rateLimitStore.releaseRpm(userId, rpmCommit.rpmMemberId());
                 budgetStore.release(reservation);
             }
-            handleRateUnavailable(rpdCommit, Reason.RATE_LIMIT_DAY, rpd, dayEnd);
+            handleRateUnavailable(userId, rpdCommit, Reason.RATE_LIMIT_DAY, rpd, dayEnd);
         } else if (rpdCommit.outcome() == StoreOutcome.BLOCKED) {
             rateLimitStore.releaseRpm(userId, rpmCommit.rpmMemberId());
             budgetStore.release(reservation);
-            block(Reason.RATE_LIMIT_DAY,
+            block(userId, Reason.RATE_LIMIT_DAY,
                     "Limite équité : max " + rpd + " requêtes / jour / utilisateur. Reset à "
                             + dayEnd + " (UTC).",
                     dayEnd);
@@ -293,6 +293,20 @@ public class UsageGuardService {
                 .record(latencyMs, TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * Provider-attributed failure (LLM call itself failed, not a guardrail block).
+     * {@code reason} is a short label (e.g. the exception's simple class name, or
+     * "timeout") — kept low-cardinality on purpose, unlike {@code model}/{@code provider}
+     * which are already bounded by the admin-managed catalog.
+     */
+    public void recordFailure(Model model, String reason) {
+        String provider = model.getProvider() != null ? model.getProvider().getName() : "unknown";
+        String modelName = model.getName() != null ? model.getName() : "unknown";
+        meterRegistry.counter("ai_gateway_provider_errors_total",
+                "provider", provider, "model", modelName, "reason", reason != null ? reason : "unknown"
+        ).increment();
+    }
+
     public Map<String, Object> statusForUser(Long userId) {
         GuardrailsProperties cfg = effectiveConfig();
         Instant dayStart = LocalDate.now(ZoneOffset.UTC).atStartOfDay().toInstant(ZoneOffset.UTC);
@@ -354,7 +368,7 @@ public class UsageGuardService {
         budgetStore.reconcileFromSql(-1, utcDate, 0, sqlGlobalCents, secondsUntilEndOfUtcDayPlusMargin());
     }
 
-    private void handleRateUnavailable(RateLimitResult result, Reason reason, int limit, Instant dayEnd) {
+    private void handleRateUnavailable(Long userId, RateLimitResult result, Reason reason, int limit, Instant dayEnd) {
         if (result.outcome() != StoreOutcome.UNAVAILABLE) {
             return;
         }
@@ -362,13 +376,20 @@ public class UsageGuardService {
             meterRegistry.counter("ai_gateway_redis_fail_open_total", "reason", reason.metricLabel()).increment();
             return;
         }
-        block(reason,
+        block(userId, reason,
                 "Rate limit indisponible (Redis). Réessayez plus tard. Limite=" + limit,
                 reason == Reason.RATE_LIMIT_DAY ? dayEnd : Instant.now().plusSeconds(30));
     }
 
-    private void block(Reason reason, String message, Instant resetsAt) {
-        meterRegistry.counter("ai_gateway_requests_blocked_total", "reason", reason.metricLabel()).increment();
+    /**
+     * {@code user} tag lets an admin spot ONE user looping (repeated RPM/budget blocks)
+     * instead of only seeing a system-wide block rate — same tagging pattern already used
+     * by {@link #recordSuccess} for tokens/cost, so no new cardinality precedent here.
+     */
+    private void block(Long userId, Reason reason, String message, Instant resetsAt) {
+        meterRegistry.counter("ai_gateway_requests_blocked_total",
+                "reason", reason.metricLabel(), "user", String.valueOf(userId)
+        ).increment();
         throw new GuardrailsExceededException(reason, message, resetsAt);
     }
 

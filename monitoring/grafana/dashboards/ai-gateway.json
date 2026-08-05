@@ -403,6 +403,172 @@
       ],
       "title": "GC pause rate",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 },
+      "id": 200,
+      "title": "LLM Usage & Guardrails",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "currencyEUR"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "id": 201,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (user) (rate(ai_gateway_cost_eur_total[1h])))",
+          "legendFormat": "user {{user}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Cost by user (top 10, €/s rate)",
+      "description": "Catches ONE user looping/burning budget — not just the global total.",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "id": 202,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (user) (rate(ai_gateway_tokens_total[1h])))",
+          "legendFormat": "user {{user}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Tokens by user (top 10, tokens/s rate)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "id": 203,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "ai_gateway_llm_latency_seconds{quantile=\"0.5\"}",
+          "legendFormat": "{{provider}} p50",
+          "refId": "A"
+        },
+        {
+          "expr": "ai_gateway_llm_latency_seconds{quantile=\"0.95\"}",
+          "legendFormat": "{{provider}} p95",
+          "refId": "B"
+        }
+      ],
+      "title": "LLM latency by provider (p50 / p95)",
+      "description": "A slowing provider is an early warning before it fails outright — also feeds routing decisions.",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "id": 204,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (provider) (rate(ai_gateway_provider_errors_total[5m]))",
+          "legendFormat": "{{provider}} ({{reason}})",
+          "refId": "A"
+        }
+      ],
+      "title": "LLM call errors by provider",
+      "description": "\"Provider health\" complement to the per-user panels above — Ollama/vLLM/OpenAI failing before it degrades UX.",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
+      "id": 205,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (reason, user) (rate(ai_gateway_requests_blocked_total[5m]))",
+          "legendFormat": "{{reason}} (user {{user}})",
+          "refId": "A"
+        }
+      ],
+      "title": "Blocked requests by reason & user",
+      "description": "A burst of rate_limit_minute blocks for ONE user is the fastest signal a loop is happening — faster than budget ratio moving.",
+      "type": "timeseries"
     }
   ],
   "refresh": "15s",

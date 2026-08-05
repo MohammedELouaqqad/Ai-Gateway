@@ -14,6 +14,7 @@ import com.backend.Ai_Gateway.repositories.UserRepository;
 import com.backend.Ai_Gateway.services.ApiKeyService;
 import com.backend.Ai_Gateway.services.UsageGuardService;
 import com.backend.Ai_Gateway.support.AbstractIntegrationTest;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,7 @@ class V1ChatApiTest extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private ApiKeyService apiKeyService;
     @Autowired private UsageGuardService usageGuardService;
+    @Autowired private MeterRegistry meterRegistry;
 
     @MockitoBean
     private LLMProviderRouter llmProviderRouter;
@@ -106,6 +108,27 @@ class V1ChatApiTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.usage.completion_tokens").value(2));
 
         verify(llmProviderRouter).chat(argThat(p -> p.getId().equals(provider.getId())), any());
+    }
+
+    @Test
+    void providerFailure_recordsProviderErrorMetric() throws Exception {
+        when(llmProviderRouter.chat(any(), any())).thenThrow(new IllegalStateException("upstream down"));
+
+        mockMvc.perform(post("/v1/chat/completions")
+                        .header("Authorization", "Bearer " + rawApiKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"model":"%s","messages":[{"role":"user","content":"hello"}]}
+                                """.formatted(modelName)))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.error.type").value("api_error"));
+
+        var counter = meterRegistry.find("ai_gateway_provider_errors_total")
+                .tag("provider", provider.getName())
+                .tag("reason", "IllegalStateException")
+                .counter();
+        org.assertj.core.api.Assertions.assertThat(counter).isNotNull();
+        org.assertj.core.api.Assertions.assertThat(counter.count()).isEqualTo(1.0);
     }
 
     @Test

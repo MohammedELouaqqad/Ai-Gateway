@@ -177,6 +177,7 @@ class ChatServiceHandleChatTest {
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(modelService.resolveActiveModel("gpt-4o")).thenReturn(model);
+        when(modelService.getById(20L)).thenReturn(model);
         when(conversationService.createConversation(1L)).thenReturn(conversation);
         when(messageService.getMessagesByConversationId(1L, 30L)).thenReturn(List.of());
         when(llmProviderRouter.chat(eq(provider), any()))
@@ -195,6 +196,8 @@ class ChatServiceHandleChatTest {
         assertEquals(RequestStatus.ERROR, entry.status());
         assertEquals("explicit", entry.routingAppliedReason());
         verify(messageService, never()).createAssistantMessage(any(), anyLong(), anyLong(), any());
+        // ai_gateway_provider_errors_total — lets an admin see which PROVIDER is failing
+        verify(usageGuardService).recordFailure(model, "RuntimeException");
     }
 
     @Test
