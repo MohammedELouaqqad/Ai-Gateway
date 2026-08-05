@@ -147,3 +147,21 @@ export interface UpdatePromptTemplateRequest {
   description?: string
   content: string
 }
+
+/** Never carries the secret — GET/PATCH always return this shape. */
+export interface ApiApiKey {
+  id: number
+  name: string
+  keyPrefix: string
+  enabled: boolean
+  createdAt?: string
+}
+
+/** POST response only, once — {@link rawKey} is never retrievable again after this. */
+export interface ApiApiKeyCreated extends ApiApiKey {
+  rawKey: string
+}
+
+export interface CreateApiKeyRequest {
+  name: string
+}

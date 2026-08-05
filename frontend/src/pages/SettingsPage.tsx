@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { AppLayout } from '../layouts/AppLayout'
+import { ApiKeysManager } from '../components/ApiKeysManager'
 import { Badge } from '../components/Badge'
 import { EmptyState } from '../components/EmptyState'
 import { getRoles, isTokenExpired, parseAccessToken } from '../auth/roles'
@@ -131,11 +132,7 @@ export function SettingsPage() {
             <h2 className="settings-section__title">{pages.settings.apiKeys}</h2>
           </div>
           <div className="settings-section__body">
-            <EmptyState
-              status="roadmap"
-              message={pages.settings.apiKeysSoon}
-              action={{ to: '/providers', label: pages.settings.manageProviders }}
-            />
+            <ApiKeysManager />
           </div>
         </section>
       </div>
