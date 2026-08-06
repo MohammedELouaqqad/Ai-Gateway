@@ -53,7 +53,7 @@ curl -s http://localhost:8080/actuator/prometheus | head
 open http://localhost:9090/targets
 ```
 
-Dans Grafana : dossier **AI Gateway** → dashboard **AI Gateway — JVM & HTTP**.
+Dans Grafana : dossier **AI Gateway** → dashboard **AI Gateway — JVM & HTTP** (le titre date d'avant la ligne "LLM Usage & Guardrails" ajoutée depuis — pas renommé pour ne pas casser des liens/favoris existants).
 
 ## Architecture
 
@@ -94,6 +94,7 @@ docker volume rm ai-gateway_prometheus_data ai-gateway_grafana_data
 ```
 monitoring/
   prometheus.yml
+  alerts.yml                         ← règles d'alerte (chargées par Prometheus, rule_files)
   README.md                          ← ce fichier
   grafana/
     dashboards/
@@ -118,6 +119,31 @@ management.metrics.distribution.percentiles.http.server.requests=0.5,0.95,0.99
 ```
 
 La latence des endpoints `/api/chat` et `/api/chat/stream` sert de **proxy** de la latence provider (temps total Gateway → LLM → réponse). Sur un modèle local (ex. `llama3.2:1b`), une moyenne de plusieurs dizaines de secondes peut être normale.
+
+### Métriques métier (Micrometer custom) — ligne dashboard "LLM Usage & Guardrails"
+
+Contrairement aux métriques JVM/HTTP ci-dessus, celles-ci sont écrites explicitement dans le code (`UsageGuardService`, `RedisRateLimitStore`, `RedisBudgetStore`) et n'existent dans Prometheus qu'**après au moins un vrai appel de chat** (un `Counter` Micrometer ne s'enregistre qu'au premier `.increment()`).
+
+| Métrique | Type | Tags | Panel dashboard |
+|----------|------|------|------------------|
+| `ai_gateway_tokens_total` | Counter | `provider`, `model`, `user` | Tokens by user (top 10) |
+| `ai_gateway_cost_eur_total` | Counter | `provider`, `model`, `user` | Cost by user (top 10) |
+| `ai_gateway_llm_latency` | Timer (p50/p95) | `provider`, `location` | LLM latency by provider |
+| `ai_gateway_provider_errors_total` | Counter | `provider`, `model`, `reason` | LLM call errors by provider |
+| `ai_gateway_requests_blocked_total` | Counter | `reason`, `user` | Blocked requests by reason & user |
+| `ai_gateway_budget_global_ratio` | Gauge | — | (alerting uniquement, pas de panel dédié) |
+
+`ai_gateway_provider_errors_total` ≠ `ai_gateway_requests_blocked_total` : le premier compte les échecs d'appel LLM lui-même (timeout, 5xx provider…), le second compte les requêtes rejetées par les guardrails (rate limit / budget) **avant** même d'appeler le provider.
+
+### Alertes Prometheus
+
+Règles dans `monitoring/alerts.yml`, chargées via `rule_files` (`prometheus.yml`) — évaluées **par Prometheus lui-même**, pas par l'app ni par Grafana. Vérifier l'état : `http://localhost:9090/alerts` ou `GET /api/v1/rules`.
+
+| Alerte | Condition |
+|--------|-----------|
+| `AiGatewayBudgetGlobalHigh` | `ai_gateway_budget_global_ratio > 0.8` pendant 2 min |
+
+⚠️ **Aucun Alertmanager configuré** — une alerte qui passe `firing` ne notifie personne activement (pas de Slack/email), elle est seulement visible sur `/alerts`. À ajouter si des notifications actives sont nécessaires.
 
 ### Tokens / coût / journal
 
