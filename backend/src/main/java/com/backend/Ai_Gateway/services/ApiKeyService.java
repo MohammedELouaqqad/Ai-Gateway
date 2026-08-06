@@ -75,14 +75,19 @@ public class ApiKeyService {
         return ApiKeyView.from(apiKeyRepository.save(apiKey));
     }
 
-    /** Used by the {@code /v1/**} auth filter — returns the owning key only if it exists and is enabled. */
+    /**
+     * Used by the {@code /v1/**} auth filter — returns the owning key only if the key itself
+     * is enabled AND its owning user hasn't been disabled by an admin (otherwise disabling a
+     * user would leave their API keys as a backdoor around that decision).
+     */
     @Transactional(readOnly = true)
     public Optional<ApiKey> authenticate(String rawKey) {
         if (rawKey == null || rawKey.isBlank()) {
             return Optional.empty();
         }
         return apiKeyRepository.findByKeyHash(sha256Hex(rawKey))
-                .filter(ApiKey::isEnabled);
+                .filter(ApiKey::isEnabled)
+                .filter(apiKey -> apiKey.getUser() != null && apiKey.getUser().isEnabled());
     }
 
     private static String randomSecret() {

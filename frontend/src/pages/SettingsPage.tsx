@@ -1,9 +1,10 @@
 import { Link } from 'react-router-dom'
 import { AppLayout } from '../layouts/AppLayout'
 import { ApiKeysManager } from '../components/ApiKeysManager'
+import { UsersManager } from '../components/UsersManager'
 import { Badge } from '../components/Badge'
 import { EmptyState } from '../components/EmptyState'
-import { getRoles, isTokenExpired, parseAccessToken } from '../auth/roles'
+import { getRoles, isAdmin, isTokenExpired, parseAccessToken } from '../auth/roles'
 import { isAuthenticated } from '../auth/session'
 import { useI18n } from '../i18n'
 
@@ -123,7 +124,11 @@ export function SettingsPage() {
             <h2 className="settings-section__title">{pages.settings.usersRoles}</h2>
           </div>
           <div className="settings-section__body">
-            <EmptyState status="roadmap" message={pages.settings.usersRolesSoon} />
+            {isAdmin() ? (
+              <UsersManager />
+            ) : (
+              <EmptyState status="info" message={pages.settings.usersAdminOnly} />
+            )}
           </div>
         </section>
 

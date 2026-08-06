@@ -39,6 +39,7 @@ class ApiKeyServiceTest {
         service = new ApiKeyService(apiKeyRepository, userRepository);
         owner = new User();
         owner.setId(1L);
+        owner.setEnabled(true);
     }
 
     @Test
@@ -93,6 +94,19 @@ class ApiKeyServiceTest {
         when(apiKeyRepository.findByKeyHash(any())).thenReturn(Optional.of(enabled));
 
         assertThat(service.authenticate("sk-some-raw-key")).contains(enabled);
+    }
+
+    @Test
+    void authenticate_rejectsKeyWhoseOwnerIsDisabled() {
+        User disabledOwner = new User();
+        disabledOwner.setId(2L);
+        disabledOwner.setEnabled(false);
+        ApiKey key = new ApiKey();
+        key.setUser(disabledOwner);
+        key.setEnabled(true);
+        when(apiKeyRepository.findByKeyHash(any())).thenReturn(Optional.of(key));
+
+        assertThat(service.authenticate("sk-some-raw-key")).isEmpty();
     }
 
     @Test

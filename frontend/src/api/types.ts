@@ -165,3 +165,16 @@ export interface ApiApiKeyCreated extends ApiApiKey {
 export interface CreateApiKeyRequest {
   name: string
 }
+
+/**
+ * Local user management only — roles are NOT here, they live exclusively in Keycloak
+ * (JWT claims). This is id/username/email/enabled/createdAt from our own `users` table.
+ */
+export interface ApiAdminUser {
+  id: number
+  keycloakId?: string
+  username?: string
+  email?: string
+  enabled: boolean
+  createdAt?: string
+}

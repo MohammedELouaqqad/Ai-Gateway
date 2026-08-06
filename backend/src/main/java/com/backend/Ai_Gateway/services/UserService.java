@@ -1,6 +1,7 @@
 package com.backend.Ai_Gateway.services;
 
 import com.backend.Ai_Gateway.entity.User;
+import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
 import com.backend.Ai_Gateway.repositories.UserRepository;
 import org.slf4j.Logger;
@@ -30,6 +31,8 @@ public class UserService {
     /**
      * Résout l'utilisateur authentifié depuis le JWT Keycloak (find-or-create).
      * Tolère les doublons historiques sur {@code keycloak_id} (renvoie le plus ancien id).
+     * Rejette un compte désactivé par un admin (voir {@link #toggleStatus}) — ne le
+     * réactive jamais tout seul, contrairement à l'ancien comportement.
      */
     @Transactional
     public User requireCurrentUser() {
@@ -40,25 +43,50 @@ public class UserService {
         }
 
         List<User> matches = userRepository.findAllByKeycloakIdOrderByIdAsc(keycloakId);
+        User user;
         if (!matches.isEmpty()) {
             reconcileDuplicateKeycloakIds(matches, keycloakId);
-            return syncProfile(matches.get(0), jwt);
+            user = syncProfile(matches.get(0), jwt);
+        } else {
+            try {
+                user = createFromJwt(jwt, keycloakId);
+            } catch (DataIntegrityViolationException ex) {
+                // Course parallèle create — recharger
+                user = userRepository.findAllByKeycloakIdOrderByIdAsc(keycloakId).stream()
+                        .findFirst()
+                        .map(existing -> syncProfile(existing, jwt))
+                        .orElseThrow(() -> new UnauthorizedException("Impossible de résoudre l'utilisateur JWT"));
+            }
         }
 
-        try {
-            return createFromJwt(jwt, keycloakId);
-        } catch (DataIntegrityViolationException ex) {
-            // Course parallèle create — recharger
-            return userRepository.findAllByKeycloakIdOrderByIdAsc(keycloakId).stream()
-                    .findFirst()
-                    .map(existing -> syncProfile(existing, jwt))
-                    .orElseThrow(() -> new UnauthorizedException("Impossible de résoudre l'utilisateur JWT"));
+        if (!user.isEnabled()) {
+            throw new UnauthorizedException("Compte désactivé");
         }
+        return user;
     }
 
     @Transactional
     public Long requireCurrentUserId() {
         return requireCurrentUser().getId();
+    }
+
+    public List<User> listAll() {
+        return userRepository.findAll();
+    }
+
+    /**
+     * Admin-only (enforced by the controller). An admin can never disable their own
+     * account this way — a self-lockout would need a direct DB fix to undo.
+     */
+    @Transactional
+    public User toggleStatus(Long targetUserId, Long actingUserId) {
+        if (targetUserId.equals(actingUserId)) {
+            throw new IllegalArgumentException("Vous ne pouvez pas désactiver votre propre compte");
+        }
+        User user = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new RessourceNotFoundException("User not found"));
+        user.setEnabled(!user.isEnabled());
+        return userRepository.save(user);
     }
 
     /**
@@ -92,10 +120,6 @@ public class UserService {
         }
         if (email != null && !email.equals(user.getEmail())) {
             user.setEmail(email);
-            dirty = true;
-        }
-        if (!user.isEnabled()) {
-            user.setEnabled(true);
             dirty = true;
         }
         return dirty ? userRepository.save(user) : user;
