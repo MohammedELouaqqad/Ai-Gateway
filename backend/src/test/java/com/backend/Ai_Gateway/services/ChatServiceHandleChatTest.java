@@ -17,8 +17,7 @@ import com.backend.Ai_Gateway.repositories.UserRepository;
 import com.backend.Ai_Gateway.services.dto.UsageLogEntry;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
 import com.backend.Ai_Gateway.services.guardrails.GuardAdmission;
-import com.backend.Ai_Gateway.services.routing.RoutingService;
-import com.backend.Ai_Gateway.config.RoutingProperties;
+import com.backend.Ai_Gateway.config.RetryProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,14 +50,12 @@ class ChatServiceHandleChatTest {
     @Mock UsageService usageService;
     @Mock UsageGuardService usageGuardService;
     @Mock LLMProviderRouter llmProviderRouter;
-    @Mock RoutingService routingService;
     @Mock MessageFeedbackService messageFeedbackService;
 
     private ChatService chatService;
 
     @BeforeEach
     void setUp() {
-        lenient().when(routingService.effectiveConfig()).thenReturn(new RoutingProperties());
         lenient().when(usageGuardService.assertAllowed(anyLong(), any(), any())).thenReturn(GuardAdmission.empty());
         chatService = new ChatService(
                 conversationRepository,
@@ -69,9 +66,8 @@ class ChatServiceHandleChatTest {
                 usageService,
                 usageGuardService,
                 llmProviderRouter,
-                routingService,
                 messageFeedbackService,
-                new ChatExecutor(llmProviderRouter, routingService)
+                new ChatExecutor(llmProviderRouter, new RetryProperties())
         );
     }
 
@@ -128,7 +124,6 @@ class ChatServiceHandleChatTest {
         assertEquals(3, entry.promptTokens());
         assertEquals(2, entry.completionTokens());
         assertEquals(RequestStatus.SUCCESS, entry.status());
-        assertEquals("explicit", entry.routingAppliedReason());
     }
 
     @Test
@@ -194,7 +189,6 @@ class ChatServiceHandleChatTest {
         assertEquals(0, entry.promptTokens());
         assertEquals(0, entry.completionTokens());
         assertEquals(RequestStatus.ERROR, entry.status());
-        assertEquals("explicit", entry.routingAppliedReason());
         verify(messageService, never()).createAssistantMessage(any(), anyLong(), anyLong(), any());
         // ai_gateway_provider_errors_total — lets an admin see which PROVIDER is failing
         verify(usageGuardService).recordFailure(model, "RuntimeException");

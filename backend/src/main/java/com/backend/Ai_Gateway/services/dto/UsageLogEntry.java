@@ -4,7 +4,7 @@ import com.backend.Ai_Gateway.enums.RequestStatus;
 
 /**
  * Named fields for {@link com.backend.Ai_Gateway.services.UsageService#logChatUsage(UsageLogEntry)}
- * so call sites stay self-documenting (no 10-arg positional lists).
+ * so call sites stay self-documenting (no positional arg lists).
  */
 public record UsageLogEntry(
         Long userId,
@@ -12,33 +12,10 @@ public record UsageLogEntry(
         Integer promptTokens,
         Integer completionTokens,
         long latencyMs,
-        RequestStatus status,
-        String routingAppliedReason,
-        String routingMode,
-        String routingProfile,
-        String routingSelectedModel
+        RequestStatus status
 ) {
-    public static UsageLogEntry error(
-            Long userId,
-            Long modelId,
-            long latencyMs,
-            String routingAppliedReason,
-            String routingMode,
-            String routingProfile,
-            String routingSelectedModel
-    ) {
-        return new UsageLogEntry(
-                userId,
-                modelId,
-                0,
-                0,
-                latencyMs,
-                RequestStatus.ERROR,
-                routingAppliedReason,
-                routingMode,
-                routingProfile,
-                routingSelectedModel
-        );
+    public static UsageLogEntry error(Long userId, Long modelId, long latencyMs) {
+        return new UsageLogEntry(userId, modelId, 0, 0, latencyMs, RequestStatus.ERROR);
     }
 
     public static UsageLogEntry success(
@@ -46,23 +23,8 @@ public record UsageLogEntry(
             Long modelId,
             Integer promptTokens,
             Integer completionTokens,
-            long latencyMs,
-            String routingAppliedReason,
-            String routingMode,
-            String routingProfile,
-            String routingSelectedModel
+            long latencyMs
     ) {
-        return new UsageLogEntry(
-                userId,
-                modelId,
-                promptTokens,
-                completionTokens,
-                latencyMs,
-                RequestStatus.SUCCESS,
-                routingAppliedReason,
-                routingMode,
-                routingProfile,
-                routingSelectedModel
-        );
+        return new UsageLogEntry(userId, modelId, promptTokens, completionTokens, latencyMs, RequestStatus.SUCCESS);
     }
 }

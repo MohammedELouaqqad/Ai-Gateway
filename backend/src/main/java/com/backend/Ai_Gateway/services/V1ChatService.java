@@ -69,7 +69,7 @@ public class V1ChatService {
         long startedAt = System.currentTimeMillis();
         boolean budgetSettled = false;
         try {
-            ChatExecutor.SuccessfulAttempt ok = chatExecutor.execute(List.of(model), messages);
+            ChatExecutor.SuccessfulAttempt ok = chatExecutor.execute(model, messages);
             usageGuardService.confirmBudgetReservation(
                     admission.budgetReservation(),
                     ok.model(),
@@ -221,8 +221,7 @@ public class V1ChatService {
 
     private void persistSuccess(Long userId, Model model, ChatResponse response, long latencyMs) {
         usageService.logChatUsage(UsageLogEntry.success(
-                userId, model.getId(), response.promptTokens(), response.completionTokens(),
-                latencyMs, "explicit", null, null, null
+                userId, model.getId(), response.promptTokens(), response.completionTokens(), latencyMs
         ));
         usageGuardService.recordSuccess(
                 userId, model,
@@ -233,7 +232,7 @@ public class V1ChatService {
     }
 
     private void persistError(Long userId, Long modelId, long latencyMs, String reason) {
-        usageService.logChatUsage(UsageLogEntry.error(userId, modelId, latencyMs, "explicit", null, null, null));
+        usageService.logChatUsage(UsageLogEntry.error(userId, modelId, latencyMs));
         recordProviderErrorMetric(modelId, reason);
     }
 

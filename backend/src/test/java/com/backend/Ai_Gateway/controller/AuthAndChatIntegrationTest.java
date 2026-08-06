@@ -102,27 +102,6 @@ class AuthAndChatIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void adminCanAccessRoutingConfig() throws Exception {
-        mockMvc.perform(get("/api/admin/routing/config")
-                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.mode").exists())
-                .andExpect(jsonPath("$.profile").exists());
-    }
-
-    @Test
-    void adminRoutingSimulate_returnsRankedAndEliminated() throws Exception {
-        mockMvc.perform(post("/api/admin/routing/simulate")
-                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"prompt\":\"hello routing\",\"streaming\":false}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.ranked").isArray())
-                .andExpect(jsonPath("$.eliminated").isArray())
-                .andExpect(jsonPath("$.profile").exists());
-    }
-
-    @Test
     void chatWithExplicitModel_returnsAssistantContent() throws Exception {
         when(llmProviderRouter.chat(any(), any()))
                 .thenReturn(new ChatResponse("bonjour-test", 3, 2));

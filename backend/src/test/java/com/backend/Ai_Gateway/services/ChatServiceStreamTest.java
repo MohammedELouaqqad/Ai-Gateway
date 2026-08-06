@@ -1,6 +1,6 @@
 package com.backend.Ai_Gateway.services;
 
-import com.backend.Ai_Gateway.config.RoutingProperties;
+import com.backend.Ai_Gateway.config.RetryProperties;
 import com.backend.Ai_Gateway.entity.Conversation;
 import com.backend.Ai_Gateway.entity.Message;
 import com.backend.Ai_Gateway.entity.Model;
@@ -17,7 +17,6 @@ import com.backend.Ai_Gateway.services.dto.UsageLogEntry;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
 import com.backend.Ai_Gateway.services.guardrails.BudgetReservation;
 import com.backend.Ai_Gateway.services.guardrails.GuardAdmission;
-import com.backend.Ai_Gateway.services.routing.RoutingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -52,7 +51,6 @@ class ChatServiceStreamTest {
     @Mock UsageService usageService;
     @Mock UsageGuardService usageGuardService;
     @Mock LLMProviderRouter llmProviderRouter;
-    @Mock RoutingService routingService;
     @Mock MessageFeedbackService messageFeedbackService;
 
     private ChatService chatService;
@@ -62,7 +60,6 @@ class ChatServiceStreamTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(routingService.effectiveConfig()).thenReturn(new RoutingProperties());
         reservation = new BudgetReservation(1L, "2026-07-27", 10, true);
         lenient().when(usageGuardService.assertAllowed(anyLong(), any(), any()))
                 .thenReturn(new GuardAdmission(reservation));
@@ -75,9 +72,8 @@ class ChatServiceStreamTest {
                 usageService,
                 usageGuardService,
                 llmProviderRouter,
-                routingService,
                 messageFeedbackService,
-                new ChatExecutor(llmProviderRouter, routingService)
+                new ChatExecutor(llmProviderRouter, new RetryProperties())
         );
 
         User user = new User();
@@ -98,6 +94,7 @@ class ChatServiceStreamTest {
         conversation.setId(30L);
         conversation.setUser(user);
         when(modelService.resolveActiveModel("qwen")).thenReturn(model);
+        lenient().when(modelService.getById(20L)).thenReturn(model);
         when(conversationService.createConversation(1L)).thenReturn(conversation);
         Message userMsg = new Message();
         userMsg.setId(40L);
@@ -134,7 +131,6 @@ class ChatServiceStreamTest {
         assertEquals(3, entry.promptTokens());
         assertEquals(2, entry.completionTokens());
         assertEquals(RequestStatus.SUCCESS, entry.status());
-        assertEquals("explicit", entry.routingAppliedReason());
     }
 
     @Test
@@ -154,7 +150,6 @@ class ChatServiceStreamTest {
         assertEquals(0, entry.promptTokens());
         assertEquals(0, entry.completionTokens());
         assertEquals(RequestStatus.ERROR, entry.status());
-        assertEquals("explicit", entry.routingAppliedReason());
     }
 
     @Test

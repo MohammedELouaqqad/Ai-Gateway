@@ -505,7 +505,7 @@
         }
       ],
       "title": "LLM latency by provider (p50 / p95)",
-      "description": "A slowing provider is an early warning before it fails outright — also feeds routing decisions.",
+      "description": "A slowing provider is an early warning before it fails outright.",
       "type": "timeseries"
     },
     {

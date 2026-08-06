@@ -1,4 +1,4 @@
-package com.backend.Ai_Gateway.services.routing;
+package com.backend.Ai_Gateway.services;
 
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;

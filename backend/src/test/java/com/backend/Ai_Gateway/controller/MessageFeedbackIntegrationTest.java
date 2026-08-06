@@ -1,6 +1,5 @@
 package com.backend.Ai_Gateway.controller;
 
-import com.backend.Ai_Gateway.config.TestJwtConfig;
 import com.backend.Ai_Gateway.entity.Conversation;
 import com.backend.Ai_Gateway.entity.Message;
 import com.backend.Ai_Gateway.entity.User;
@@ -118,20 +117,4 @@ class MessageFeedbackIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
-    @Test
-    void adminModelQuality_emptyIsNotMeasured() throws Exception {
-        mockMvc.perform(get("/api/admin/routing/model-quality")
-                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.overallQualityStatus").value("NOT_MEASURED"))
-                .andExpect(jsonPath("$.models").isArray());
-    }
-
-    @Test
-    void userCannotAccessModelQuality() throws Exception {
-        mockMvc.perform(get("/api/admin/routing/model-quality")
-                        .with(jwt().jwt(j -> j.subject(TestJwtConfig.TEST_SUBJECT))
-                                .authorities(new SimpleGrantedAuthority("ROLE_USER"))))
-                .andExpect(status().isForbidden());
-    }
 }

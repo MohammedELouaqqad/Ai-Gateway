@@ -10,7 +10,6 @@ import { PromptTemplatesPage } from './pages/PromptTemplatesPage'
 import { ModelsPage } from './pages/ModelsPage'
 import { UsagePage } from './pages/UsagePage'
 import { ProvidersPage } from './pages/ProvidersPage'
-import { RoutingPage } from './pages/RoutingPage'
 import { RateLimitingPage } from './pages/RateLimitingPage'
 import { ObservabilityPage } from './pages/ObservabilityPage'
 import { AdminHealthPage } from './pages/AdminHealthPage'
@@ -47,7 +46,6 @@ export default function App() {
 
       <Route path="/models" element={<AdminOnly><ModelsPage /></AdminOnly>} />
       <Route path="/providers" element={<AdminOnly><ProvidersPage /></AdminOnly>} />
-      <Route path="/routing" element={<AdminOnly><RoutingPage /></AdminOnly>} />
       <Route path="/rate-limiting" element={<AdminOnly><RateLimitingPage /></AdminOnly>} />
       <Route path="/observability" element={<AdminOnly><ObservabilityPage /></AdminOnly>} />
       <Route path="/admin/health" element={<AdminOnly><AdminHealthPage /></AdminOnly>} />

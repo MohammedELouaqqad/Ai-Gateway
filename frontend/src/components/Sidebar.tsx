@@ -13,7 +13,6 @@ import {
   MessageSquare,
   Server,
   Settings,
-  Split,
 } from 'lucide-react'
 import { getRoles, hasRole, isAdmin, parseAccessToken } from '../auth/roles'
 import { beginLogin } from '../auth/keycloak'
@@ -105,13 +104,6 @@ export function Sidebar() {
         items: [
           { to: '/models', label: nav.models, icon: Boxes, badge: 'mvp' as const, adminOnly: true },
           { to: '/providers', label: nav.providers, icon: Server, badge: 'mvp' as const, adminOnly: true },
-          {
-            to: '/routing',
-            label: nav.routing,
-            icon: Split,
-            badge: 'mvp' as const,
-            adminOnly: true,
-          },
           {
             to: '/rate-limiting',
             label: nav.rateLimit,

@@ -9,17 +9,13 @@ import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
 import com.backend.Ai_Gateway.repositories.MessageFeedbackRepository;
 import com.backend.Ai_Gateway.repositories.MessageRepository;
-import com.backend.Ai_Gateway.services.dto.ModelQualityStats;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -111,30 +107,6 @@ public class MessageFeedbackService {
 
     public Optional<FeedbackRating> findRating(Long userId, Long messageId) {
         return feedbackRepository.findByMessageIdAndUserId(messageId, userId).map(MessageFeedback::getRating);
-    }
-
-    /**
-     * Empirical quality per applied model. Models with zero feedback → {@code NOT_MEASURED}.
-     */
-    public List<ModelQualityStats> aggregateByModel() {
-        Map<String, long[]> counts = new LinkedHashMap<>();
-        for (Object[] row : feedbackRepository.countGroupedByModelAndRating()) {
-            String model = (String) row[0];
-            FeedbackRating rating = (FeedbackRating) row[1];
-            long count = (Long) row[2];
-            long[] pair = counts.computeIfAbsent(model, k -> new long[2]);
-            if (rating == FeedbackRating.UP) {
-                pair[0] = count;
-            } else if (rating == FeedbackRating.DOWN) {
-                pair[1] = count;
-            }
-        }
-        List<ModelQualityStats> result = new ArrayList<>();
-        for (Map.Entry<String, long[]> e : counts.entrySet()) {
-            result.add(ModelQualityStats.of(e.getKey(), e.getValue()[0], e.getValue()[1]));
-        }
-        result.sort(Comparator.comparing(ModelQualityStats::modelName));
-        return result;
     }
 
     private Message requireOwnedAssistantMessage(Long userId, Long messageId) {

@@ -1,85 +1,59 @@
 package com.backend.Ai_Gateway.services;
 
+import com.backend.Ai_Gateway.config.RetryProperties;
 import com.backend.Ai_Gateway.entity.Model;
 import com.backend.Ai_Gateway.provider.LLMProviderRouter;
 import com.backend.Ai_Gateway.provider.dto.ChatMessage;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
-import com.backend.Ai_Gateway.services.routing.ProviderFailureAction;
-import com.backend.Ai_Gateway.services.routing.ProviderFailureClassifier;
-import com.backend.Ai_Gateway.services.routing.RoutingService;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 /**
- * Sync-only try-order + retry/fallback policy.
+ * Sync-only retry policy for a single, already-resolved model — retries the SAME
+ * provider on a transient failure (see {@link ProviderFailureClassifier}).
  * <p>
  * Streaming deliberately does <strong>not</strong> use this component: once SSE bytes
- * have been sent, multi-model fallback is forbidden (double-billing / corrupted stream).
+ * have been sent, a retry is forbidden (double-billing / corrupted stream).
  */
 @Component
 public class ChatExecutor {
 
     private final LLMProviderRouter llmProviderRouter;
-    private final RoutingService routingService;
+    private final RetryProperties retryProperties;
 
-    public ChatExecutor(LLMProviderRouter llmProviderRouter, RoutingService routingService) {
+    public ChatExecutor(LLMProviderRouter llmProviderRouter, RetryProperties retryProperties) {
         this.llmProviderRouter = llmProviderRouter;
-        this.routingService = routingService;
+        this.retryProperties = retryProperties;
     }
 
     /**
-     * Attempts candidates in order with retry-same / fallback-next per
-     * {@link ProviderFailureClassifier} (always with {@code anyBytesReceived=false}).
-     *
-     * @return first successful attempt
-     * @throws ChatExecutionFailedException when all candidates are exhausted (cause = last error)
+     * @return the successful attempt
+     * @throws ChatExecutionFailedException once retries are exhausted (cause = last error)
      */
-    public SuccessfulAttempt execute(List<Model> tryOrder, List<ChatMessage> messages) {
-        if (tryOrder == null || tryOrder.isEmpty()) {
-            throw new IllegalStateException("No routable model available");
-        }
+    public SuccessfulAttempt execute(Model model, List<ChatMessage> messages) {
+        ChatRequest request = new ChatRequest(model.getName(), messages);
+        int maxRetries = retryProperties.getMaxRetries();
+        long backoff = retryProperties.getRetryBackoffMs();
         RuntimeException lastError = null;
-        int maxRetries = routingService.effectiveConfig().getMaxRetries();
-        long backoff = routingService.effectiveConfig().getRetryBackoffMs();
 
-        for (int i = 0; i < tryOrder.size(); i++) {
-            Model candidate = tryOrder.get(i);
-            ChatRequest request = new ChatRequest(candidate.getName(), messages);
-
-            for (int attempt = 0; attempt <= maxRetries; attempt++) {
-                try {
-                    ChatResponse response = llmProviderRouter.chat(candidate.getProvider(), request);
-                    if (i > 0) {
-                        routingService.meterFallback("fallback_after_failure");
-                    }
-                    return new SuccessfulAttempt(candidate, request, response, i, lastError);
-                } catch (RuntimeException ex) {
-                    lastError = ex;
-                    ProviderFailureAction action = ProviderFailureClassifier.classify(ex, false);
-                    if (action == ProviderFailureAction.RETRY_SAME && attempt < maxRetries) {
-                        sleepQuietly(backoff * (attempt + 1));
-                        continue;
-                    }
-                    if (action == ProviderFailureAction.FALLBACK_NEXT && i + 1 < tryOrder.size()) {
-                        routingService.meterFallback(ProviderFailureClassifier.reasonLabel(action, ex));
-                        break;
-                    }
-                    if (action == ProviderFailureAction.RETRY_SAME && i + 1 < tryOrder.size()) {
-                        routingService.meterFallback(ProviderFailureClassifier.reasonLabel(action, ex));
-                        break;
-                    }
-                    throw new ChatExecutionFailedException(candidate.getId(), ex);
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                ChatResponse response = llmProviderRouter.chat(model.getProvider(), request);
+                return new SuccessfulAttempt(model, request, response);
+            } catch (RuntimeException ex) {
+                lastError = ex;
+                ProviderFailureAction action = ProviderFailureClassifier.classify(ex, false);
+                if (action == ProviderFailureAction.RETRY_SAME && attempt < maxRetries) {
+                    sleepQuietly(backoff * (attempt + 1));
+                    continue;
                 }
+                throw new ChatExecutionFailedException(model.getId(), ex);
             }
         }
-
-        if (lastError != null) {
-            Long modelId = tryOrder.get(tryOrder.size() - 1).getId();
-            throw new ChatExecutionFailedException(modelId, lastError);
-        }
-        throw new IllegalStateException("No routable model available");
+        // Unreachable (loop always returns or throws) — keeps the compiler happy.
+        throw new ChatExecutionFailedException(model.getId(), lastError);
     }
 
     private static void sleepQuietly(long ms) {
@@ -93,21 +67,5 @@ public class ChatExecutor {
         }
     }
 
-    public record SuccessfulAttempt(
-            Model model,
-            ChatRequest request,
-            ChatResponse response,
-            int candidateIndex,
-            RuntimeException priorError
-    ) {
-        public boolean fellBack() {
-            return candidateIndex > 0;
-        }
-
-        public String fallbackRoutingReason() {
-            return "fallback:" + (priorError != null
-                    ? priorError.getClass().getSimpleName()
-                    : "error");
-        }
-    }
+    public record SuccessfulAttempt(Model model, ChatRequest request, ChatResponse response) {}
 }

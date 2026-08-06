@@ -15,7 +15,6 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React) avec chat syn
 | Observability (`/observability`) | ADMIN — fiabilité / latence (p50/p95), liens Grafana & Prometheus |
 | Rate limiting (`/rate-limiting`) | ADMIN — config + état vitesse (req/min, req/jour) et budget (€) |
 | Redis garde-fous | RPM/RPD/budget partagés (opt-in `APP_REDIS_ENABLED`) — Postgres = vérité |
-| Routing (`/routing`) | ADMIN — sélection auto (Filter→Score), mode **SHADOW** par défaut, simulateur |
 | Santé système (`/admin/health`) | ADMIN — Gateway, Postgres, Prometheus + conso par utilisateur |
 | Prompt templates | CRUD + insert chat (`{{content}}`) |
 | Auth | Keycloak JWT (Resource Server) — find-or-create user via `sub` |
@@ -133,22 +132,7 @@ SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stac
 | GET | `/api/usage/export/csv?…` | Export CSV (streaming réponse) |
 | GET/PUT | `/api/admin/guardrails/config` | Limites rate/budget (**ADMIN**) |
 | GET | `/api/admin/guardrails/status` | Consommation vs plafonds (**ADMIN**) |
-| GET/PUT | `/api/admin/routing/config` | Mode SHADOW/ACTIVE, profil, retries (**ADMIN**) |
-| POST | `/api/admin/routing/simulate` | Dry-run Filter→Score (pas de LLM) (**ADMIN**) |
-| GET | `/api/admin/routing/shadow-stats` | Agrégats divergence / coût (**ADMIN**) |
 | GET/POST | `/api/prompt-templates` | Templates |
-
-### Routing intelligent (v1)
-
-Quand le chat envoie **sans modèle** (`Auto`), le gateway décide via :
-
-1. **Filtre dur** (élimination) : provider off, budget insuffisant, contexte trop petit, pas d’adaptateur  
-2. **Score soft** (profils ECONOMY / QUALITY / SPEED / BALANCED)  
-3. Listes `eliminated` + `ranked` (fallback uniquement sur `ranked`)
-
-**SHADOW** (défaut) : calcule + logue, utilise encore le modèle default.  
-**ACTIVE** : utilise le gagnant. Config : `application-routing.yml`.  
-Chat : sélecteur **Auto (routing)**.
 
 ### Garde-fous LLM (rate limit + budget)
 
@@ -269,9 +253,9 @@ Couverture prioritaire ajoutée :
 
 | Type | Exemples |
 |------|----------|
-| Unitaire | `UsageGuardServiceTest` (RPM/RPD/budget/D1), `ModelPricingServiceTest`, `ChatServiceBudgetLifecycleTest` (release/confirm), `InMemoryGuardStoresTest`, `RoutingServiceTest`, `ProviderFailureClassifierTest` |
+| Unitaire | `UsageGuardServiceTest` (RPM/RPD/budget/D1), `ModelPricingServiceTest`, `ChatServiceBudgetLifecycleTest` (release/confirm), `InMemoryGuardStoresTest`, `ProviderFailureClassifierTest` |
 | Intégration Redis | `RedisGuardStoresIT` (Testcontainers `redis:7-alpine`, skip si Docker absent) |
-| Intégration HTTP | `AuthAndChatIntegrationTest` (401/403, routing simulate, chat mock LLM), `ApiSmokeTest`, `SecurityRegressionTest` |
+| Intégration HTTP | `AuthAndChatIntegrationTest` (401/403, chat mock LLM), `ApiSmokeTest`, `SecurityRegressionTest` |
 
 Prérequis IT Spring : PostgreSQL joignable (comme les tests existants). Redis IT : Docker.
 

@@ -69,28 +69,8 @@ public class UsageService {
         usageLog.setStatus(entry.status());
         usageLog.setCreatedAt(Instant.now());
         usageLog.setEstimatedCost(calculateCost(prompt, completion, model.getName()));
-        usageLog.setRoutingAppliedReason(entry.routingAppliedReason());
-        usageLog.setRoutingMode(entry.routingMode());
-        usageLog.setRoutingProfile(entry.routingProfile());
-        usageLog.setRoutingSelectedModel(entry.routingSelectedModel());
 
         usageLogRepository.save(usageLog);
-    }
-
-    /** Convenience overload without routing metadata. */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void logChatUsage(
-            Long userId,
-            Long modelId,
-            Integer promptTokens,
-            Integer completionTokens,
-            long latencyMs,
-            RequestStatus status
-    ) {
-        logChatUsage(new UsageLogEntry(
-                userId, modelId, promptTokens, completionTokens, latencyMs, status,
-                null, null, null, null
-        ));
     }
 
     public int getTotalTokensByUserId(Long userId) {

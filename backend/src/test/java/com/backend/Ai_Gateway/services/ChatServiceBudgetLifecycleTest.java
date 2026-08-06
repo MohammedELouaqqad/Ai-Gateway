@@ -1,6 +1,6 @@
 package com.backend.Ai_Gateway.services;
 
-import com.backend.Ai_Gateway.config.RoutingProperties;
+import com.backend.Ai_Gateway.config.RetryProperties;
 import com.backend.Ai_Gateway.entity.Conversation;
 import com.backend.Ai_Gateway.entity.Message;
 import com.backend.Ai_Gateway.entity.Model;
@@ -17,7 +17,6 @@ import com.backend.Ai_Gateway.services.dto.UsageLogEntry;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
 import com.backend.Ai_Gateway.services.guardrails.BudgetReservation;
 import com.backend.Ai_Gateway.services.guardrails.GuardAdmission;
-import com.backend.Ai_Gateway.services.routing.RoutingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,7 +31,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -50,7 +48,6 @@ class ChatServiceBudgetLifecycleTest {
     @Mock UsageService usageService;
     @Mock UsageGuardService usageGuardService;
     @Mock LLMProviderRouter llmProviderRouter;
-    @Mock RoutingService routingService;
     @Mock MessageFeedbackService messageFeedbackService;
 
     private ChatService chatService;
@@ -59,7 +56,7 @@ class ChatServiceBudgetLifecycleTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(routingService.effectiveConfig()).thenReturn(new RoutingProperties());
+        RetryProperties retryProperties = new RetryProperties();
         chatService = new ChatService(
                 conversationRepository,
                 userRepository,
@@ -69,9 +66,8 @@ class ChatServiceBudgetLifecycleTest {
                 usageService,
                 usageGuardService,
                 llmProviderRouter,
-                routingService,
                 messageFeedbackService,
-                new ChatExecutor(llmProviderRouter, routingService)
+                new ChatExecutor(llmProviderRouter, retryProperties)
         );
 
         provider = new Provider();
@@ -94,6 +90,7 @@ class ChatServiceBudgetLifecycleTest {
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(modelService.resolveActiveModel("gpt-4o-mini")).thenReturn(model);
+        lenient().when(modelService.getById(2L)).thenReturn(model);
         when(conversationService.createConversation(1L)).thenReturn(conversation);
         Message userMsg = new Message();
         userMsg.setId(40L);

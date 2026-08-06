@@ -9,7 +9,6 @@ import com.backend.Ai_Gateway.enums.MessageRole;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
 import com.backend.Ai_Gateway.repositories.MessageFeedbackRepository;
 import com.backend.Ai_Gateway.repositories.MessageRepository;
-import com.backend.Ai_Gateway.services.dto.ModelQualityStats;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -108,30 +107,4 @@ class MessageFeedbackServiceTest {
                 () -> service.upsert(1L, 100L, FeedbackRating.UP, null));
     }
 
-    @Test
-    void aggregateByModel_emptyIsNotMeasuredOverall() {
-        when(feedbackRepository.countGroupedByModelAndRating()).thenReturn(List.of());
-        assertThat(service.aggregateByModel()).isEmpty();
-    }
-
-    @Test
-    void aggregateByModel_computesUpRatio_andMeasuredStatus() {
-        when(feedbackRepository.countGroupedByModelAndRating()).thenReturn(List.of(
-                new Object[]{"llama3.2:1b", FeedbackRating.UP, 3L},
-                new Object[]{"llama3.2:1b", FeedbackRating.DOWN, 1L}
-        ));
-        List<ModelQualityStats> stats = service.aggregateByModel();
-        assertThat(stats).hasSize(1);
-        ModelQualityStats llama = stats.get(0);
-        assertThat(llama.qualityStatus()).isEqualTo(ModelQualityStats.MEASURED);
-        assertThat(llama.volume()).isEqualTo(4);
-        assertThat(llama.upRatio()).isEqualTo(0.75);
-    }
-
-    @Test
-    void modelQualityStats_zeroVolume_isNotMeasured() {
-        ModelQualityStats empty = ModelQualityStats.of("any", 0, 0);
-        assertThat(empty.qualityStatus()).isEqualTo(ModelQualityStats.NOT_MEASURED);
-        assertThat(empty.upRatio()).isNull();
-    }
 }
