@@ -396,6 +396,13 @@ export const en: Dictionary = {
       apiKeysRevoke: 'Revoke',
       apiKeysRevokeConfirm: 'Revoke key "{name}"? Any app using it loses access immediately.',
       apiKeysRevoked: 'Revoked',
+      apiKeysExpiresLabel: 'Expiration',
+      apiKeysExpiresNever: 'Never',
+      apiKeysExpires30: '30 days',
+      apiKeysExpires90: '90 days',
+      apiKeysExpires365: '1 year',
+      apiKeysColExpires: 'Expires',
+      apiKeysExpiredBadge: 'Expired',
       manageProviders: 'Manage providers',
     },
     accessDenied: {

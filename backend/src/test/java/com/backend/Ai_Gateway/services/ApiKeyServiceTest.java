@@ -51,11 +51,12 @@ class ApiKeyServiceTest {
             return saved;
         });
 
-        ApiKeyCreatedView created = service.generate(1L, "ci-key");
+        ApiKeyCreatedView created = service.generate(1L, "ci-key", null);
 
         assertThat(created.rawKey()).startsWith("sk-");
         assertThat(created.keyPrefix()).isEqualTo(created.rawKey().substring(0, 12));
         assertThat(created.enabled()).isTrue();
+        assertThat(created.expiresAt()).isNull();
 
         ArgumentCaptor<ApiKey> captor = ArgumentCaptor.forClass(ApiKey.class);
         verify(apiKeyRepository).save(captor.capture());
@@ -63,12 +64,24 @@ class ApiKeyServiceTest {
         assertThat(persisted.getKeyHash()).isNotEqualTo(created.rawKey());
         assertThat(persisted.getKeyHash()).hasSize(64); // hex-encoded SHA-256
         assertThat(persisted.getUser()).isSameAs(owner);
+        assertThat(persisted.getExpiresAt()).isNull();
+    }
+
+    @Test
+    void generate_withExpiresInDays_setsExpiresAtInTheFuture() {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(owner));
+        when(apiKeyRepository.save(any(ApiKey.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ApiKeyCreatedView created = service.generate(1L, "ci-key", 30);
+
+        assertThat(created.expiresAt()).isAfter(Instant.now().plusSeconds(29 * 24 * 3600));
+        assertThat(created.expiresAt()).isBefore(Instant.now().plusSeconds(31 * 24 * 3600));
     }
 
     @Test
     void generate_unknownUserThrows() {
         when(userRepository.findById(99L)).thenReturn(Optional.empty());
-        assertThrows(RessourceNotFoundException.class, () -> service.generate(99L, "x"));
+        assertThrows(RessourceNotFoundException.class, () -> service.generate(99L, "x", null));
     }
 
     @Test
@@ -94,6 +107,24 @@ class ApiKeyServiceTest {
         when(apiKeyRepository.findByKeyHash(any())).thenReturn(Optional.of(enabled));
 
         assertThat(service.authenticate("sk-some-raw-key")).contains(enabled);
+    }
+
+    @Test
+    void authenticate_rejectsExpiredKey() {
+        ApiKey expired = apiKeyEntity(true);
+        expired.setExpiresAt(Instant.now().minusSeconds(60));
+        when(apiKeyRepository.findByKeyHash(any())).thenReturn(Optional.of(expired));
+
+        assertThat(service.authenticate("sk-some-raw-key")).isEmpty();
+    }
+
+    @Test
+    void authenticate_acceptsKeyWithFutureExpiry() {
+        ApiKey notYetExpired = apiKeyEntity(true);
+        notYetExpired.setExpiresAt(Instant.now().plusSeconds(3600));
+        when(apiKeyRepository.findByKeyHash(any())).thenReturn(Optional.of(notYetExpired));
+
+        assertThat(service.authenticate("sk-some-raw-key")).contains(notYetExpired);
     }
 
     @Test

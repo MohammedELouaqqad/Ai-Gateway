@@ -81,7 +81,7 @@ class V1ChatApiTest extends AbstractIntegrationTest {
         modelName = "v1-model-" + UUID.randomUUID();
         newModel(modelName, provider);
 
-        rawApiKey = apiKeyService.generate(user.getId(), "ci-key").rawKey();
+        rawApiKey = apiKeyService.generate(user.getId(), "ci-key", null).rawKey();
     }
 
     @AfterEach

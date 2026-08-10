@@ -54,6 +54,8 @@ public class SecurityConfig {
             ObjectMapper objectMapper
     ) throws Exception {
         ApiKeyAuthFilter apiKeyAuthFilter = new ApiKeyAuthFilter(apiKeyService);
+        MaxRequestSizeFilter maxRequestSizeFilter =
+                new MaxRequestSizeFilter(ContentLimits.V1_REQUEST_BODY_MAX_BYTES, objectMapper);
         http
                 .securityMatcher("/v1/**")
                 .csrf(csrf -> csrf.disable())
@@ -66,7 +68,10 @@ public class SecurityConfig {
                 )
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(new ApiKeyAuthenticationEntryPoint(objectMapper)))
-                .addFilterBefore(apiKeyAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(apiKeyAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // Body-size check runs strictly before auth: reject oversized bodies before
+                // spending any work (incl. key lookup) on the request.
+                .addFilterBefore(maxRequestSizeFilter, ApiKeyAuthFilter.class);
         return http.build();
     }
 
@@ -80,11 +85,10 @@ public class SecurityConfig {
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // /actuator/** is NOT reachable on this port anymore — it moved to its
+                        // own management.server.port (see application.properties), unpublished
+                        // from the host in docker-compose.yml. Nothing to matcher-permit here.
                         .requestMatchers(
-                                "/actuator/health",
-                                "/actuator/health/**",
-                                "/actuator/prometheus",
-                                "/actuator/info",
                                 "/error",
                                 // Swagger / OpenAPI (springdoc)
                                 "/v3/api-docs",

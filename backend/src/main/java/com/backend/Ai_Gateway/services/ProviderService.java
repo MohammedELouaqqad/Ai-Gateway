@@ -48,6 +48,8 @@ public class ProviderService {
             throw new RessourceAlreadyExistsException("Provider already exist");
         }
 
+        ProviderBaseUrlValidator.validate(request.type(), request.baseUrl());
+
         Provider provider = new Provider();
         provider.setName(name);
         provider.setType(request.type());
@@ -71,6 +73,8 @@ public class ProviderService {
                 .ifPresent(existing -> {
                     throw new RessourceAlreadyExistsException("Provider already exists: " + newName);
                 });
+
+        ProviderBaseUrlValidator.validate(provider.getType(), request.baseUrl());
 
         provider.setName(newName);
         if (request.baseUrl() != null) {

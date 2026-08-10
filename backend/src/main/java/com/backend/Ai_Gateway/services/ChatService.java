@@ -7,19 +7,15 @@ import com.backend.Ai_Gateway.entity.Message;
 import com.backend.Ai_Gateway.entity.Model;
 import com.backend.Ai_Gateway.enums.FeedbackRating;
 import com.backend.Ai_Gateway.enums.FeedbackSource;
-import com.backend.Ai_Gateway.enums.ProviderType;
-import com.backend.Ai_Gateway.exceptions.ProviderNotImplementedException;
 import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
 import com.backend.Ai_Gateway.provider.LLMProviderRouter;
-import com.backend.Ai_Gateway.provider.ProviderCapabilities;
 import com.backend.Ai_Gateway.provider.dto.ChatChunk;
 import com.backend.Ai_Gateway.provider.dto.ChatMessage;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.repositories.ConversationRepository;
 import com.backend.Ai_Gateway.repositories.UserRepository;
-import com.backend.Ai_Gateway.services.dto.UsageLogEntry;
 import com.backend.Ai_Gateway.services.dto.UserChatRequest;
 import com.backend.Ai_Gateway.services.guardrails.GuardAdmission;
 import org.springframework.http.MediaType;
@@ -51,11 +47,10 @@ public class ChatService {
     private final ConversationService conversationService;
     private final MessageService messageService;
     private final ModelService modelService;
-    private final UsageService usageService;
     private final UsageGuardService usageGuardService;
     private final LLMProviderRouter llmProviderRouter;
     private final MessageFeedbackService messageFeedbackService;
-    private final ChatExecutor chatExecutor;
+    private final ChatUsageSupport chatUsageSupport;
 
     public ChatService(
             ConversationRepository conversationRepository,
@@ -63,22 +58,20 @@ public class ChatService {
             ConversationService conversationService,
             MessageService messageService,
             ModelService modelService,
-            UsageService usageService,
             UsageGuardService usageGuardService,
             LLMProviderRouter llmProviderRouter,
             MessageFeedbackService messageFeedbackService,
-            ChatExecutor chatExecutor
+            ChatUsageSupport chatUsageSupport
     ) {
         this.conversationRepository = conversationRepository;
         this.userRepository = userRepository;
         this.conversationService = conversationService;
         this.messageService = messageService;
         this.modelService = modelService;
-        this.usageService = usageService;
         this.usageGuardService = usageGuardService;
         this.llmProviderRouter = llmProviderRouter;
         this.messageFeedbackService = messageFeedbackService;
-        this.chatExecutor = chatExecutor;
+        this.chatUsageSupport = chatUsageSupport;
     }
 
     public ChatResponse handleChat(Long userId, UserChatRequest userChatRequest) {
@@ -110,7 +103,7 @@ public class ChatService {
         Model model = oldAssistant.getModelName() != null && !oldAssistant.getModelName().isBlank()
                 ? modelService.resolveActiveModel(oldAssistant.getModelName())
                 : modelService.resolveActiveModel(null);
-        ensureAdapterAvailable(model, false);
+        chatUsageSupport.ensureAdapterAvailable(model, false);
 
         List<Message> history = messageService.getMessagesByConversationId(userId, conversation.getId());
         List<Message> clipped = new ArrayList<>();
@@ -135,30 +128,10 @@ public class ChatService {
     }
 
     private ChatResponse completeSyncChat(Long userId, PreparedChat prepared) {
-        GuardAdmission admission = usageGuardService.assertAllowed(
+        ChatUsageSupport.SyncRunResult run = chatUsageSupport.runSync(
                 userId, prepared.model(), prepared.request().messages());
-        long startedAt = System.currentTimeMillis();
-        boolean budgetSettled = false;
-
-        try {
-            ChatExecutor.SuccessfulAttempt ok = chatExecutor.execute(prepared.model(), prepared.request().messages());
-            usageGuardService.confirmBudgetReservation(
-                    admission.budgetReservation(),
-                    ok.model(),
-                    ok.response().promptTokens() != null ? ok.response().promptTokens() : 0,
-                    ok.response().completionTokens() != null ? ok.response().completionTokens() : 0
-            );
-            budgetSettled = true;
-            persistSuccess(userId, prepared, ok.response(), System.currentTimeMillis() - startedAt);
-            return ok.response();
-        } catch (ChatExecutionFailedException ex) {
-            logError(userId, ex.failedModelId(), startedAt, ex.causeAsRuntime().getClass().getSimpleName());
-            throw ex.causeAsRuntime();
-        } finally {
-            if (!budgetSettled) {
-                usageGuardService.releaseBudgetReservation(admission.budgetReservation());
-            }
-        }
+        persistSuccess(userId, prepared, run.attempt().response(), run.latencyMs());
+        return run.attempt().response();
     }
 
     /**
@@ -185,7 +158,8 @@ public class ChatService {
         emitter.onTimeout(() -> {
             cancelUpstream.run();
             releaseBudgetIfNeeded.run();
-            logError(userId, prepared.model().getId(), startedAt, "timeout");
+            chatUsageSupport.recordError(
+                    userId, prepared.model().getId(), System.currentTimeMillis() - startedAt, "timeout");
             emitter.complete();
         });
         emitter.onError(ex -> {
@@ -257,7 +231,9 @@ public class ChatService {
             Throwable error
     ) {
         releaseBudgetIfNeeded.run();
-        logError(userId, prepared.model().getId(), startedAt, error.getClass().getSimpleName());
+        chatUsageSupport.recordError(
+                userId, prepared.model().getId(), System.currentTimeMillis() - startedAt,
+                error.getClass().getSimpleName());
         emitter.completeWithError(error);
     }
 
@@ -324,38 +300,13 @@ public class ChatService {
         messageService.createUserMessage(content, conversation.getId(), userId);
 
         Model model = modelService.resolveActiveModel(userChatRequest.getModel());
-        ensureAdapterAvailable(model, streaming);
+        chatUsageSupport.ensureAdapterAvailable(model, streaming);
         attachModelToConversation(conversation, model);
 
         List<Message> messages = messageService.getMessagesByConversationId(userId, conversation.getId());
         List<ChatMessage> chatMessages = fitToContextBudget(messages);
         ChatRequest request = new ChatRequest(model.getName(), chatMessages);
         return new PreparedChat(model, conversation, request);
-    }
-
-    private void logError(Long userId, Long modelId, long startedAt, String reason) {
-        usageService.logChatUsage(UsageLogEntry.error(userId, modelId, System.currentTimeMillis() - startedAt));
-        recordProviderErrorMetric(modelId, reason);
-    }
-
-    /** Best-effort only — a metrics lookup must never break the actual error-reporting path. */
-    private void recordProviderErrorMetric(Long modelId, String reason) {
-        try {
-            usageGuardService.recordFailure(modelService.getById(modelId), reason);
-        } catch (RuntimeException ignored) {
-            // metric only
-        }
-    }
-
-    /** Avant persistence du message user et avant tout SseEmitter. */
-    private void ensureAdapterAvailable(Model model, boolean streaming) {
-        ProviderType type = model.getProvider().getType();
-        boolean ok = streaming
-                ? ProviderCapabilities.hasStreamAdapter(type)
-                : ProviderCapabilities.hasChatAdapter(type);
-        if (!ok) {
-            throw new ProviderNotImplementedException(type);
-        }
     }
 
     private void persistSuccess(Long userId, PreparedChat prepared, ChatResponse response, long latencyMs) {
@@ -365,20 +316,7 @@ public class ChatService {
                 userId,
                 prepared.model()
         );
-        usageService.logChatUsage(UsageLogEntry.success(
-                userId,
-                prepared.model().getId(),
-                response.promptTokens(),
-                response.completionTokens(),
-                latencyMs
-        ));
-        usageGuardService.recordSuccess(
-                userId,
-                prepared.model(),
-                response.promptTokens() != null ? response.promptTokens() : 0,
-                response.completionTokens() != null ? response.completionTokens() : 0,
-                latencyMs
-        );
+        chatUsageSupport.recordSuccess(userId, prepared.model(), response, latencyMs);
     }
 
     private record PreparedChat(Model model, Conversation conversation, ChatRequest request) {}

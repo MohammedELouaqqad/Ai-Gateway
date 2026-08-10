@@ -57,17 +57,22 @@ class ChatServiceHandleChatTest {
     @BeforeEach
     void setUp() {
         lenient().when(usageGuardService.assertAllowed(anyLong(), any(), any())).thenReturn(GuardAdmission.empty());
+        ChatUsageSupport chatUsageSupport = new ChatUsageSupport(
+                modelService,
+                usageService,
+                usageGuardService,
+                new ChatExecutor(llmProviderRouter, new RetryProperties())
+        );
         chatService = new ChatService(
                 conversationRepository,
                 userRepository,
                 conversationService,
                 messageService,
                 modelService,
-                usageService,
                 usageGuardService,
                 llmProviderRouter,
                 messageFeedbackService,
-                new ChatExecutor(llmProviderRouter, new RetryProperties())
+                chatUsageSupport
         );
     }
 

@@ -63,7 +63,7 @@ class ChatExecutorTest {
 
     @Test
     void execute_rateLimit_noRetry_throwsImmediately() {
-        // 429 → FALLBACK_NEXT, and with a single model there's no "next" — same as FAIL.
+        // 429 classifies as FAIL directly — no retry, no second candidate to fall back to.
         WebClientResponseException tooMany = WebClientResponseException.create(
                 429, "Too Many", null, null, null);
         when(llmProviderRouter.chat(eq(providerA), any())).thenThrow(tooMany);

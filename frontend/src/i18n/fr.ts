@@ -394,6 +394,13 @@ export const fr = {
       apiKeysRevoke: 'Révoquer',
       apiKeysRevokeConfirm: 'Révoquer la clé « {name} » ? Toute application qui l’utilise perdra l’accès immédiatement.',
       apiKeysRevoked: 'Révoquée',
+      apiKeysExpiresLabel: 'Expiration',
+      apiKeysExpiresNever: 'Jamais',
+      apiKeysExpires30: '30 jours',
+      apiKeysExpires90: '90 jours',
+      apiKeysExpires365: '1 an',
+      apiKeysColExpires: 'Expire',
+      apiKeysExpiredBadge: 'Expirée',
       manageProviders: 'Gérer les providers',
     },
     accessDenied: {

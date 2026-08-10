@@ -24,6 +24,9 @@ public class ApiKey {
     private boolean enabled;
     private Instant createdAt;
 
+    /** Nullable — null means the key never expires. Set once at creation, never updated. */
+    private Instant expiresAt;
+
     @ManyToOne
     private User user;
 

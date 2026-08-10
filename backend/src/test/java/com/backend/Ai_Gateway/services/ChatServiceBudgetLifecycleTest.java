@@ -57,17 +57,22 @@ class ChatServiceBudgetLifecycleTest {
     @BeforeEach
     void setUp() {
         RetryProperties retryProperties = new RetryProperties();
+        ChatUsageSupport chatUsageSupport = new ChatUsageSupport(
+                modelService,
+                usageService,
+                usageGuardService,
+                new ChatExecutor(llmProviderRouter, retryProperties)
+        );
         chatService = new ChatService(
                 conversationRepository,
                 userRepository,
                 conversationService,
                 messageService,
                 modelService,
-                usageService,
                 usageGuardService,
                 llmProviderRouter,
                 messageFeedbackService,
-                new ChatExecutor(llmProviderRouter, retryProperties)
+                chatUsageSupport
         );
 
         provider = new Provider();

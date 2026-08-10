@@ -122,14 +122,9 @@ public class UsageController {
         PrintWriter writer = response.getWriter();
         writer.println("id,model,provider,location,tokens,cost,latencyMs,status,createdAt");
         for (UsageLog log : logs) {
-            String modelName = log.getModel() != null
-                    ? (log.getModel().getDisplayName() != null ? log.getModel().getDisplayName() : log.getModel().getName())
-                    : "";
-            String providerName = log.getModel() != null && log.getModel().getProvider() != null
-                    ? log.getModel().getProvider().getName() : "";
-            String loc = log.getModel() != null && log.getModel().getProvider() != null
-                    && log.getModel().getProvider().getLocation() != null
-                    ? log.getModel().getProvider().getLocation().name() : "";
+            String modelName = UsageService.resolveModelLabel(log, "");
+            String providerName = UsageService.resolveProviderLabel(log, "");
+            String loc = UsageService.resolveLocationLabel(log, "");
             writer.printf(
                     "%d,%s,%s,%s,%d,%.6f,%s,%s,%s%n",
                     log.getId(),

@@ -28,7 +28,7 @@ public class ApiKeyController {
     @ResponseStatus(HttpStatus.CREATED)
     public ApiKeyCreatedView create(@Valid @RequestBody CreateApiKeyRequest request) {
         Long userId = userService.requireCurrentUserId();
-        return apiKeyService.generate(userId, request.name());
+        return apiKeyService.generate(userId, request.name(), request.expiresInDays());
     }
 
     @GetMapping

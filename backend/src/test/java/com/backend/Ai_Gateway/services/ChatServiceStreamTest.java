@@ -63,17 +63,22 @@ class ChatServiceStreamTest {
         reservation = new BudgetReservation(1L, "2026-07-27", 10, true);
         lenient().when(usageGuardService.assertAllowed(anyLong(), any(), any()))
                 .thenReturn(new GuardAdmission(reservation));
+        ChatUsageSupport chatUsageSupport = new ChatUsageSupport(
+                modelService,
+                usageService,
+                usageGuardService,
+                new ChatExecutor(llmProviderRouter, new RetryProperties())
+        );
         chatService = new ChatService(
                 conversationRepository,
                 userRepository,
                 conversationService,
                 messageService,
                 modelService,
-                usageService,
                 usageGuardService,
                 llmProviderRouter,
                 messageFeedbackService,
-                new ChatExecutor(llmProviderRouter, new RetryProperties())
+                chatUsageSupport
         );
 
         User user = new User();

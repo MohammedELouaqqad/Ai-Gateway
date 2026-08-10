@@ -7,6 +7,7 @@ set -euo pipefail
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_DB="${POSTGRES_DB:-Ai_Gateway_DB}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
+KEYCLOAK_DB_PASSWORD="${KEYCLOAK_DB_PASSWORD:-keycloak}"
 
 psql_base=(psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER")
 if [ -n "${PGHOST:-}" ]; then
@@ -18,7 +19,9 @@ fi
   DO \$\$
   BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'keycloak') THEN
-      CREATE ROLE keycloak LOGIN PASSWORD 'keycloak';
+      CREATE ROLE keycloak LOGIN PASSWORD '$KEYCLOAK_DB_PASSWORD';
+    ELSE
+      ALTER ROLE keycloak PASSWORD '$KEYCLOAK_DB_PASSWORD';
     END IF;
   END
   \$\$;

@@ -3,6 +3,10 @@ import react from '@vitejs/plugin-react'
 
 const apiProxyTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:8080'
 const keycloakProxyTarget = process.env.KEYCLOAK_PROXY_TARGET ?? 'http://localhost:8180'
+// Actuator lives on its own management.server.port (8081), separate from the API port (8080)
+// and never published to the host in docker-compose.yml — reachable here only because this
+// dev-server container shares the Docker network with the backend container.
+const managementProxyTarget = process.env.MANAGEMENT_PROXY_TARGET ?? 'http://localhost:8081'
 const inDocker = process.env.DOCKER === 'true' || process.env.CHOKIDAR_USEPOLLING === 'true'
 
 export default defineConfig({
@@ -58,9 +62,9 @@ export default defineConfig({
           })
         },
       },
-      // Actuator (health) — hub Observability
+      // Actuator (health) — hub Observability. Separate target: management.server.port (8081).
       '/actuator': {
-        target: apiProxyTarget,
+        target: managementProxyTarget,
         changeOrigin: true,
       },
       // Prometheus health (scrape status) — avoid browser CORS

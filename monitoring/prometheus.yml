@@ -20,6 +20,8 @@ scrape_configs:
     metrics_path: /actuator/prometheus
     scrape_interval: 15s
     static_configs:
-      - targets: ['gateway:8080']
+      # Management port (8081) — separate from the app port (8080), unpublished to the host.
+      # Reachable here only because Prometheus shares the Docker internal network.
+      - targets: ['gateway:8081']
         labels:
           app: ai-gateway

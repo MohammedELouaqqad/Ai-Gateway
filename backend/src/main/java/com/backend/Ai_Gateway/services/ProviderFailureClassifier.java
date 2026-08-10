@@ -19,13 +19,11 @@ public final class ProviderFailureClassifier {
         Throwable root = rootCause(error);
         if (root instanceof WebClientResponseException wcre) {
             int status = wcre.getStatusCode().value();
-            if (status == 429) {
-                return ProviderFailureAction.FALLBACK_NEXT;
-            }
             if (status >= 500) {
                 return ProviderFailureAction.RETRY_SAME;
             }
-            // 4xx (invalid prompt, auth, etc.)
+            // 429 (rate-limited) and 4xx (invalid prompt, auth, etc.) — no second candidate
+            // to fall back to (single-model execution), so both end up the same: FAIL.
             return ProviderFailureAction.FAIL;
         }
         if (root instanceof TimeoutException
@@ -36,19 +34,10 @@ public final class ProviderFailureClassifier {
             return ProviderFailureAction.RETRY_SAME;
         }
         String msg = root.getMessage() != null ? root.getMessage().toLowerCase() : "";
-        if (msg.contains("429") || msg.contains("rate limit")) {
-            return ProviderFailureAction.FALLBACK_NEXT;
-        }
         if (msg.contains("timed out") || msg.contains("timeout") || msg.contains("connection")) {
             return ProviderFailureAction.RETRY_SAME;
         }
         return ProviderFailureAction.FAIL;
-    }
-
-    public static String reasonLabel(ProviderFailureAction action, Throwable error) {
-        Throwable root = rootCause(error);
-        String type = root.getClass().getSimpleName();
-        return action.name().toLowerCase() + ":" + type;
     }
 
     private static Throwable rootCause(Throwable error) {

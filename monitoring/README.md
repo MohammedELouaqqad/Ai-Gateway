@@ -13,8 +13,8 @@ Deux couches complémentaires :
 |----------------|-----|-------|
 | Prometheus | http://localhost:9090 | — |
 | Grafana | http://localhost:3000 | `admin` / `admin` |
-| Actuator metrics | http://localhost:8080/actuator/prometheus | public (scrape) |
-| Actuator health | http://localhost:8080/actuator/health | public (détails selon auth) |
+| Actuator metrics | `gateway:8081/actuator/prometheus` (réseau Docker interne uniquement) | non publié à l'hôte |
+| Actuator health | `gateway:8081/actuator/health` (réseau Docker interne uniquement) | non publié à l'hôte |
 | Dashboard app | http://localhost:5173/dashboard | USER+ |
 | Usage | http://localhost:5173/usage | USER+ |
 | Observability | http://localhost:5173/observability | ADMIN |
@@ -24,18 +24,18 @@ Deux couches complémentaires :
 
 ## Démarrage
 
-### Stack Docker (recommandé — scrape `gateway:8080`)
+### Stack Docker (recommandé — scrape `gateway:8081`)
 
 ```bash
 # Postgres + Keycloak + backend + frontend + Prometheus + Grafana
 docker compose --profile stack up --build -d
 ```
 
-Le service `backend` expose l’alias DNS **`gateway`** → scrape unique `gateway:8080` (job `ai-gateway`).
+Le service `backend` expose l’alias DNS **`gateway`** → scrape unique `gateway:8081` (job `ai-gateway`) — port de management Actuator, séparé de l'API publique (`:8080`) et **non publié à l'hôte** (`expose`, pas `ports`, dans docker-compose.yml) : seuls les conteneurs du réseau Docker interne (Prometheus) l'atteignent.
 
 Prometheus / Grafana n’ont pas de `profiles` : ils démarrent avec Compose dès que tu lances la stack (ou `docker compose up -d prometheus grafana` si la stack tourne déjà).
 
-> **Note :** le scrape du Gateway exige le backend dans Docker (`gateway:8080`). Un backend lancé seulement en natif n’est plus scrapé (job `host.docker.internal` retiré volontairement).
+> **Note :** le scrape du Gateway exige le backend dans Docker (`gateway:8081`). Un backend lancé seulement en natif n’est plus scrapé (job `host.docker.internal` retiré volontairement).
 
 ## Vérifications
 
@@ -46,10 +46,8 @@ curl -s http://localhost:9090/-/healthy
 # Santé Grafana
 curl -s http://localhost:3000/api/health
 
-# Métriques Gateway
-curl -s http://localhost:8080/actuator/prometheus | head
-
-# Targets Prometheus (UI)
+# Targets Prometheus (UI) — le plus simple pour vérifier le scrape :8081
+# (le port management n'est pas publié à l'hôte, donc pas de curl direct depuis l'hôte)
 open http://localhost:9090/targets
 ```
 
@@ -60,14 +58,14 @@ Dans Grafana : dossier **AI Gateway** → dashboard **AI Gateway — JVM & HTTP*
 ```
 ┌────────────┐     scrape /actuator/prometheus      ┌────────────┐
 │  Gateway   │ ◄────────────────────────────────────│ Prometheus │
-│  :8080     │                                      │   :9090    │
-└────────────┘                                      └─────┬──────┘
-                                                          │ datasource
-                                                          ▼
-                                                    ┌────────────┐
-                                                    │  Grafana   │
-                                                    │   :3000    │
-                                                    └────────────┘
+│  :8081 mgmt│      (réseau Docker interne          │   :9090    │
+│ (:8080 API)│       uniquement — pas publié)        └─────┬──────┘
+└────────────┘                                            │ datasource
+                                                            ▼
+                                                      ┌────────────┐
+                                                      │  Grafana   │
+                                                      │   :3000    │
+                                                      └────────────┘
 ```
 
 ## Persistance
@@ -159,14 +157,15 @@ Prometheus **ne remplace pas** ces données (pas de coût par appel #N).
 
 ## Sécurité scrape
 
-`/actuator/health` et `/actuator/prometheus` sont en `permitAll` pour laisser Prometheus scraper sans JWT.  
-Ne pas exposer ces ports publiquement sans réseau privé / auth reverse-proxy en production.
+`/actuator/health` et `/actuator/prometheus` n'ont pas d'auth applicative (Prometheus n'envoie pas de JWT) — la protection vient du **réseau**, pas d'un login : ils vivent sur `management.server.port` (8081), un port séparé de l'API publique (8080) et **jamais publié à l'hôte** (`expose:`, pas `ports:`, dans docker-compose.yml). Seuls les conteneurs du réseau Docker interne (Prometheus) peuvent les atteindre ; rien depuis l'extérieur.
+
+En dehors de Compose (déploiement natif, Kubernetes...), reproduire cette isolation par un firewall / security group / NetworkPolicy sur le port 8081 — ne jamais l'exposer publiquement.
 
 ## Dépannage
 
 | Symptôme | Cause probable | Action |
 |----------|----------------|--------|
-| Target `gateway:8080` DOWN | Profile `stack` / backend arrêté | `docker compose --profile stack up -d backend` |
+| Target `gateway:8081` DOWN | Profile `stack` / backend arrêté | `docker compose --profile stack up -d backend` |
 | 401 sur `/actuator/prometheus` | Ancienne image backend | Rebuild : `docker compose --profile stack build backend` |
 | Dashboard vide | Pas encore de scrape | Attendre 15–30 s, vérifier `/targets` |
 | Grafana healthcheck fail | Image sans `wget` | Voir logs `docker compose logs grafana` |

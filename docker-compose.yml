@@ -1,5 +1,8 @@
 # Dev local — AI Gateway
 #
+# Requis avant toute commande ci-dessous — les credentials n'ont plus de repli faible :
+#   cp .env.example .env
+#
 # PostgreSQL seul :
 #   docker compose up database
 #
@@ -25,7 +28,7 @@ services:
     image: postgres:15
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a Postgres password in .env (see .env.example)}
       POSTGRES_DB: Ai_Gateway_DB
     ports:
       - "5433:5432"
@@ -47,7 +50,7 @@ services:
     command:
       - redis-server
       - --requirepass
-      - ${REDIS_PASSWORD:-changeme}
+      - ${REDIS_PASSWORD:?set a Redis password in .env (see .env.example)}
       - --maxmemory
       - 256mb
       - --maxmemory-policy
@@ -57,7 +60,7 @@ services:
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?set a Redis password in .env (see .env.example)}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -72,8 +75,9 @@ services:
     environment:
       PGHOST: database
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a Postgres password in .env (see .env.example)}
       POSTGRES_DB: Ai_Gateway_DB
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set a Keycloak DB password in .env (see .env.example)}
     volumes:
       - ./docker/postgres/init/01-create-keycloak-db.sh:/init-keycloak-db.sh:ro
     entrypoint: ["/bin/bash", "/init-keycloak-db.sh"]
@@ -88,12 +92,12 @@ services:
     image: quay.io/keycloak/keycloak:26.0
     command: ["start-dev", "--http-port=8080"]
     environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set a Keycloak admin password in .env (see .env.example)}
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://database:5432/keycloak
       KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set a Keycloak DB password in .env (see .env.example)}
       KC_HEALTH_ENABLED: "true"
       KC_HOSTNAME: localhost
       KC_HOSTNAME_PORT: "8180"
@@ -125,12 +129,16 @@ services:
           - gateway
     ports:
       - "8080:8080"
+    # 8081 = actuator/prometheus (management.server.port) — deliberately NOT published to the
+    # host, only reachable from other containers on this Docker network (e.g. prometheus).
+    expose:
+      - "8081"
     env_file:
       - ./backend/.env
     environment:
       DB_URL: jdbc:postgresql://database:5432/Ai_Gateway_DB
       DB_USERNAME: postgres
-      DB_PASSWORD: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set a Postgres password in .env (see .env.example)}
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       APP_SEED_ENABLED: "true"
       # iss du JWT = URL vue par le navigateur (port hôte 8180)
@@ -140,7 +148,7 @@ services:
       APP_REDIS_ENABLED: "true"
       APP_REDIS_HOST: redis
       APP_REDIS_PORT: "6379"
-      APP_REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+      APP_REDIS_PASSWORD: ${REDIS_PASSWORD:?set a Redis password in .env (see .env.example)}
       APP_REDIS_RL_FAIL_OPEN: "false"
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -159,6 +167,7 @@ services:
       - "5173:5173"
     environment:
       API_PROXY_TARGET: http://backend:8080
+      MANAGEMENT_PROXY_TARGET: http://backend:8081
       KEYCLOAK_PROXY_TARGET: http://keycloak:8080
       KEYCLOAK_PUBLIC_HOST: localhost:8180
       VITE_GRAFANA_URL: http://localhost:3000
@@ -197,8 +206,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set a Grafana admin password in .env (see .env.example)}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/ai-gateway.json
     volumes:

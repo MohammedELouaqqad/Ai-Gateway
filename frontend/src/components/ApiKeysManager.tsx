@@ -8,12 +8,16 @@ import { Badge } from './Badge'
 
 const NAME_MAX = 100
 
+/** value = days, '' = never expires */
+const EXPIRY_OPTIONS = ['', '30', '90', '365'] as const
+
 export function ApiKeysManager() {
   const { pages, common } = useI18n()
   const t = pages.settings
 
   const [keys, setKeys] = useState<ApiApiKey[]>([])
   const [name, setName] = useState('')
+  const [expiresInDays, setExpiresInDays] = useState<(typeof EXPIRY_OPTIONS)[number]>('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -48,9 +52,13 @@ export function ApiKeysManager() {
     setSaving(true)
     setError(null)
     try {
-      const created = await createApiKey({ name: trimmed })
+      const created = await createApiKey({
+        name: trimmed,
+        expiresInDays: expiresInDays ? Number(expiresInDays) : undefined,
+      })
       setRevealed(created)
       setName('')
+      setExpiresInDays('')
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : common.loadError)
@@ -117,6 +125,18 @@ export function ApiKeysManager() {
               maxLength={NAME_MAX}
               required
             />
+            <select
+              id="api-key-expires"
+              className="form-input"
+              aria-label={t.apiKeysExpiresLabel}
+              value={expiresInDays}
+              onChange={(e) => setExpiresInDays(e.target.value as (typeof EXPIRY_OPTIONS)[number])}
+            >
+              <option value="">{t.apiKeysExpiresNever}</option>
+              <option value="30">{t.apiKeysExpires30}</option>
+              <option value="90">{t.apiKeysExpires90}</option>
+              <option value="365">{t.apiKeysExpires365}</option>
+            </select>
             <button type="submit" className="btn btn--primary btn--sm" disabled={saving}>
               {saving ? common.creating : common.create}
             </button>
@@ -132,38 +152,45 @@ export function ApiKeysManager() {
               <th scope="col">{t.apiKeysColPrefix}</th>
               <th scope="col">{common.status}</th>
               <th scope="col">{common.created}</th>
+              <th scope="col">{t.apiKeysColExpires}</th>
               <th scope="col">{common.actions}</th>
             </tr>
           </thead>
           <tbody>
-            {keys.map((key) => (
-              <tr key={key.id}>
-                <td><strong>{key.name}</strong></td>
-                <td className="mono">{key.keyPrefix}…</td>
-                <td>
-                  {key.enabled ? (
-                    <Badge variant="success" dot>{common.active}</Badge>
-                  ) : (
-                    <Badge variant="secondary" dot>{t.apiKeysRevoked}</Badge>
-                  )}
-                </td>
-                <td className="mono">{formatDateTime(key.createdAt)}</td>
-                <td>
-                  {key.enabled && (
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--sm btn--danger"
-                      onClick={() => void handleRevoke(key)}
-                    >
-                      {t.apiKeysRevoke}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {keys.map((key) => {
+              const expired = !!key.expiresAt && new Date(key.expiresAt).getTime() < Date.now()
+              return (
+                <tr key={key.id}>
+                  <td><strong>{key.name}</strong></td>
+                  <td className="mono">{key.keyPrefix}…</td>
+                  <td>
+                    {!key.enabled ? (
+                      <Badge variant="secondary" dot>{t.apiKeysRevoked}</Badge>
+                    ) : expired ? (
+                      <Badge variant="secondary" dot>{t.apiKeysExpiredBadge}</Badge>
+                    ) : (
+                      <Badge variant="success" dot>{common.active}</Badge>
+                    )}
+                  </td>
+                  <td className="mono">{formatDateTime(key.createdAt)}</td>
+                  <td className="mono">{key.expiresAt ? formatDateTime(key.expiresAt) : t.apiKeysExpiresNever}</td>
+                  <td>
+                    {key.enabled && (
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm btn--danger"
+                        onClick={() => void handleRevoke(key)}
+                      >
+                        {t.apiKeysRevoke}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
             {!loading && keys.length === 0 && (
               <tr>
-                <td colSpan={5} className="table-empty">{t.apiKeysEmpty}</td>
+                <td colSpan={6} className="table-empty">{t.apiKeysEmpty}</td>
               </tr>
             )}
           </tbody>

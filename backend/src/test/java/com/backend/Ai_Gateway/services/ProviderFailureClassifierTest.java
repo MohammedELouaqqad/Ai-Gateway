@@ -19,11 +19,11 @@ class ProviderFailureClassifierTest {
     }
 
     @Test
-    void fallbackOn429() {
+    void failsOn429_noSecondCandidateToFallBackTo() {
         WebClientResponseException ex = WebClientResponseException.create(
                 429, "Too Many Requests", null, null, null);
         assertThat(ProviderFailureClassifier.classify(ex, false))
-                .isEqualTo(ProviderFailureAction.FALLBACK_NEXT);
+                .isEqualTo(ProviderFailureAction.FAIL);
     }
 
     @Test

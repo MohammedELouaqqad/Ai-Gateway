@@ -41,7 +41,9 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React), compatible *
 
 ```bash
 # 1. Base
-createdb Ai_Gateway_DB   # ou Docker : docker compose up database
+createdb Ai_Gateway_DB
+# ou Docker (nécessite un .env racine — cp .env.example .env, voir section Docker plus bas) :
+# docker compose up database
 
 # 2. Backend (:8080)
 cd backend
@@ -59,7 +61,11 @@ Ouvrir http://localhost:5173
 ## Docker (stack complète)
 
 ```bash
-# Ollama doit tourner sur l’hôte (Keycloak est dans Compose)
+# 1. Requis avant tout démarrage — docker compose refuse de démarrer sans ce fichier
+#    (voir "⚠️ Identifiants par défaut" plus bas)
+cp .env.example .env
+
+# 2. Ollama doit tourner sur l’hôte (Keycloak est dans Compose)
 docker compose --profile stack up --build -d
 ```
 
@@ -95,6 +101,9 @@ SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stac
 ```
 
 **Note prod réelle :** Compose convient pour un serveur unique / démo. Pour une prod HA, préférer Kubernetes ou un IdP managé ; Keycloak tourne déjà sur Postgres (`base keycloak`, même instance que l’app) — en prod utiliser `start` (pas `start-dev`) + HA.
+
+**⚠️ Identifiants :** `docker compose` refuse de démarrer sans `.env` (fail-closed — plus de repli silencieux sur `admin/admin`). `.env.example` fournit des valeurs pratiques pour le dev local (`postgres/postgres`, `admin/admin`, ...) — copier vers `.env` (racine, gitignored, lu automatiquement par `docker compose`) et y mettre de **vraies valeurs** avant tout déploiement atteignable au-delà de `localhost` (Postgres, Redis, Keycloak et Grafana ont tous leur port publié par défaut).
+
 ## Premier test
 
 1. **Ollama** → `ollama pull llama3.2:1b` (le seed peut déjà activer le modèle en BDD)

@@ -31,4 +31,10 @@ public final class ContentLimits {
 
     /** Nom d'une clé API */
     public static final int API_KEY_NAME_MAX = 100;
+
+    /** Nombre max de messages dans une requête /v1/chat/completions (l'appelant fournit tout l'historique). */
+    public static final int V1_MESSAGES_MAX_COUNT = 200;
+
+    /** Taille max du corps d'une requête /v1/** — rejetée avant désérialisation Jackson (voir MaxRequestSizeFilter). */
+    public static final long V1_REQUEST_BODY_MAX_BYTES = 20_000_000L;
 }

@@ -10,7 +10,8 @@ public record ApiKeyView(
         String name,
         String keyPrefix,
         boolean enabled,
-        Instant createdAt
+        Instant createdAt,
+        Instant expiresAt
 ) {
     public static ApiKeyView from(ApiKey apiKey) {
         return new ApiKeyView(
@@ -18,7 +19,8 @@ public record ApiKeyView(
                 apiKey.getName(),
                 apiKey.getKeyPrefix(),
                 apiKey.isEnabled(),
-                apiKey.getCreatedAt()
+                apiKey.getCreatedAt(),
+                apiKey.getExpiresAt()
         );
     }
 }

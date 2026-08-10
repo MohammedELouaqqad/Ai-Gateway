@@ -1,1 +1,8 @@
 AI_GATEWAY_PROJECT.md
+
+# Secrets — root-level .env (docker compose reads this automatically for
+# POSTGRES_PASSWORD / KEYCLOAK_ADMIN_PASSWORD / GRAFANA_ADMIN_PASSWORD overrides).
+# backend/.env and frontend/.env are already covered by their own nested .gitignore.
+.env
+.env.local
+.env.*.local

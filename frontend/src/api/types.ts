@@ -155,6 +155,8 @@ export interface ApiApiKey {
   keyPrefix: string
   enabled: boolean
   createdAt?: string
+  /** null/undefined = never expires. */
+  expiresAt?: string | null
 }
 
 /** POST response only, once — {@link rawKey} is never retrievable again after this. */
@@ -164,6 +166,8 @@ export interface ApiApiKeyCreated extends ApiApiKey {
 
 export interface CreateApiKeyRequest {
   name: string
+  /** Optional TTL in days — omit/undefined for a key that never expires. */
+  expiresInDays?: number
 }
 
 /**

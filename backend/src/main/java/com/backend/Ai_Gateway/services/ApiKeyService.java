@@ -16,6 +16,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
@@ -38,8 +39,9 @@ public class ApiKeyService {
         this.userRepository = userRepository;
     }
 
+    /** {@code expiresInDays} is optional — null means the key never expires. */
     @Transactional
-    public ApiKeyCreatedView generate(Long userId, String name) {
+    public ApiKeyCreatedView generate(Long userId, String name, Integer expiresInDays) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RessourceNotFoundException("User not found"));
 
@@ -52,6 +54,7 @@ public class ApiKeyService {
         apiKey.setKeyPrefix(rawKey.substring(0, Math.min(DISPLAY_PREFIX_LEN, rawKey.length())));
         apiKey.setEnabled(true);
         apiKey.setCreatedAt(Instant.now());
+        apiKey.setExpiresAt(expiresInDays == null ? null : Instant.now().plus(expiresInDays, ChronoUnit.DAYS));
 
         ApiKey saved = apiKeyRepository.save(apiKey);
         return ApiKeyCreatedView.from(saved, rawKey);
@@ -77,8 +80,8 @@ public class ApiKeyService {
 
     /**
      * Used by the {@code /v1/**} auth filter — returns the owning key only if the key itself
-     * is enabled AND its owning user hasn't been disabled by an admin (otherwise disabling a
-     * user would leave their API keys as a backdoor around that decision).
+     * is enabled, unexpired, AND its owning user hasn't been disabled by an admin (otherwise
+     * disabling a user would leave their API keys as a backdoor around that decision).
      */
     @Transactional(readOnly = true)
     public Optional<ApiKey> authenticate(String rawKey) {
@@ -87,6 +90,7 @@ public class ApiKeyService {
         }
         return apiKeyRepository.findByKeyHash(sha256Hex(rawKey))
                 .filter(ApiKey::isEnabled)
+                .filter(apiKey -> apiKey.getExpiresAt() == null || apiKey.getExpiresAt().isAfter(Instant.now()))
                 .filter(apiKey -> apiKey.getUser() != null && apiKey.getUser().isEnabled());
     }
 

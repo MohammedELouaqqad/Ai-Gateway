@@ -169,19 +169,40 @@ public class UsageService {
         return result;
     }
 
+    /**
+     * Model/provider/location display resolution shared with {@code UsageController.exportCsv}
+     * — a UsageLog's model should never be null in practice (set at write time; model
+     * deletion is blocked while usage logs reference it), but this stays defensive either way.
+     * {@code fallback} is a parameter (not a fixed constant) so each caller keeps its own
+     * exact prior behavior — CSV used {@code ""}, aggregation used {@code "—"}/{@code "LOCAL"}.
+     */
+    public static String resolveModelLabel(UsageLog log, String fallback) {
+        if (log.getModel() == null) {
+            return fallback;
+        }
+        String displayName = log.getModel().getDisplayName();
+        return displayName != null ? displayName : log.getModel().getName();
+    }
+
+    public static String resolveProviderLabel(UsageLog log, String fallback) {
+        return log.getModel() != null && log.getModel().getProvider() != null
+                ? log.getModel().getProvider().getName()
+                : fallback;
+    }
+
+    public static String resolveLocationLabel(UsageLog log, String fallback) {
+        return log.getModel() != null && log.getModel().getProvider() != null
+                && log.getModel().getProvider().getLocation() != null
+                ? log.getModel().getProvider().getLocation().name()
+                : fallback;
+    }
+
     public List<Map<String, Object>> aggregateByModel(List<UsageLog> logs) {
         Map<String, Agg> map = new HashMap<>();
         for (UsageLog log : logs) {
-            String modelName = log.getModel() != null
-                    ? (log.getModel().getDisplayName() != null ? log.getModel().getDisplayName() : log.getModel().getName())
-                    : "—";
-            String providerName = log.getModel() != null && log.getModel().getProvider() != null
-                    ? log.getModel().getProvider().getName()
-                    : "—";
-            String location = log.getModel() != null && log.getModel().getProvider() != null
-                    && log.getModel().getProvider().getLocation() != null
-                    ? log.getModel().getProvider().getLocation().name()
-                    : "LOCAL";
+            String modelName = resolveModelLabel(log, "—");
+            String providerName = resolveProviderLabel(log, "—");
+            String location = resolveLocationLabel(log, "LOCAL");
             String key = providerName + "|" + (log.getModel() != null ? log.getModel().getName() : modelName);
             Agg agg = map.computeIfAbsent(key, k -> new Agg(modelName, providerName, location));
             agg.requests++;
