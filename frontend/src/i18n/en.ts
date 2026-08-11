@@ -406,6 +406,7 @@ export const en: Dictionary = {
       valid: 'Valid',
       expired: 'Expired',
       viewProfile: 'View profile →',
+      accountConsole: 'Manage my account (password, name, email) ↗',
       usersRoles: 'Users & Roles',
       usersRolesDesc: 'Enable/disable a local account. Roles stay managed exclusively in Keycloak.',
       usersAdminOnly: 'Admins only.',

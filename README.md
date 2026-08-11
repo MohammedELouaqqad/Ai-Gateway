@@ -298,6 +298,8 @@ Checklist realm Keycloak avant d'activer `Realm Settings → Login → User regi
 
 **Défense en profondeur côté app :** `UserService.requireCurrentUser()` rejette aussi un JWT avec `email_verified: false` explicite — au cas où le realm serait mal configuré malgré la checklist ci-dessus.
 
+**Changer son mot de passe / nom / email :** entièrement délégué à l'**Account Console** Keycloak (self-service, même session SSO déjà active — pas de re-login) — lien dans **Settings** (`Auth Keycloak → Gérer mon compte`). Aucun formulaire de ce type côté app, volontairement : la sécurité (hash, politique de mot de passe, historique) reste 100 % du ressort de l'IdP.
+
 ```bash
 # Sans token → 401
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/models

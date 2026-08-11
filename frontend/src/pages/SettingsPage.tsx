@@ -4,6 +4,7 @@ import { ApiKeysManager } from '../components/ApiKeysManager'
 import { UsersManager } from '../components/UsersManager'
 import { Badge } from '../components/Badge'
 import { EmptyState } from '../components/EmptyState'
+import { accountConsoleUrl } from '../auth/keycloak'
 import { getRoles, isAdmin, isTokenExpired, parseAccessToken } from '../auth/roles'
 import { isAuthenticated } from '../auth/session'
 import { useI18n } from '../i18n'
@@ -116,6 +117,18 @@ export function SettingsPage() {
                 {pages.settings.viewProfile}
               </Link>
             </p>
+            {connected && (
+              <p className="settings-auth__hint">
+                <a
+                  href={accountConsoleUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="card__link"
+                >
+                  {pages.settings.accountConsole}
+                </a>
+              </p>
+            )}
           </div>
         </section>
 

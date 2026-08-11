@@ -167,6 +167,15 @@ async function exchangeAuthorizationCode(search: string): Promise<string> {
   return redirect.startsWith('/') ? redirect : '/'
 }
 
+/**
+ * URL de l'Account Console Keycloak (self-service) — mot de passe, nom, email, sessions actives.
+ * Aucun formulaire à construire côté app : la même session SSO déjà active dans le navigateur
+ * (celle qui a produit le JWT) s'applique, pas de re-login.
+ */
+export function accountConsoleUrl(): string {
+  return `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/account/`
+}
+
 /** Déconnexion locale + page logout Keycloak. */
 export function logout(): void {
   const idToken = getIdToken()

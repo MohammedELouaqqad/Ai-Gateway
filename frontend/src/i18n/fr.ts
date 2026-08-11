@@ -404,6 +404,7 @@ export const fr = {
       valid: 'Valide',
       expired: 'Expiré',
       viewProfile: 'Voir le profil →',
+      accountConsole: 'Gérer mon compte (mot de passe, nom, email) ↗',
       usersRoles: 'Users & Rôles',
       usersRolesDesc: 'Activer/désactiver un compte local. Les rôles restent gérés uniquement dans Keycloak.',
       usersAdminOnly: 'Réservé aux administrateurs.',
