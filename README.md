@@ -11,7 +11,7 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React), compatible *
 | Chat sync (`POST /api/chat`) | Ollama, OpenAI, Azure OpenAI (auth `api-key`, pas Bearer), vLLM, SGLang |
 | Chat stream SSE (`POST /api/chat/stream`) | Hérité du **provider** — pas de config par modèle |
 | Conversations / messages | CRUD + historique. Suppression = disparition immédiate côté user ; conservée ~30j en base comme filet de sécurité technique avant purge réelle (`ConversationRetentionJob`), pas une corbeille visible |
-| Modèles / Fournisseurs | Admin + activation. `baseUrl` validée à l'écriture (https obligatoire pour OpenAI/Azure, IP metadata cloud bloquée) |
+| Modèles / Fournisseurs | Admin + activation. `apiKey` configurable directement dans l'UI (création + édition) — jamais réaffichée après coup, juste un badge "clé configurée/absente" (`apiKeyPresent`). Champ vide/non touché = clé existante conservée, pas d'effacement silencieux. `baseUrl` validée à l'écriture (https obligatoire pour OpenAI/Azure, IP metadata cloud bloquée) |
 | **Journal d'audit** (`/admin/audit-log`, ADMIN) | Trace les actions admin réussies (users, providers, modèles, guardrails) — qui, quoi, cible, diff avant/après. Jamais de secret dans le diff (`apiKeyChanged` seulement) |
 | **Users & Rôles** (Settings, ADMIN) | Liste + activer/désactiver un compte local. Les **rôles** restent exclusivement gérés dans Keycloak (pas ici) |
 | Dashboard (`/dashboard`) | KPI récents (scopes 24h / 7j / 30j / session), taux d’erreur, latence moy., conso tokens/coût |
