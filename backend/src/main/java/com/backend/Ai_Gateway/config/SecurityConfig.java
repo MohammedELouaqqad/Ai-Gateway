@@ -85,10 +85,23 @@ public class SecurityConfig {
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // /actuator/** is NOT reachable on this port anymore — it moved to its
-                        // own management.server.port (see application.properties), unpublished
-                        // from the host in docker-compose.yml. Nothing to matcher-permit here.
+                        // /actuator/** is served on its own management.server.port (see
+                        // application.properties), never published to the host in
+                        // docker-compose.yml (network boundary = the real protection here).
+                        // It STILL needs permitAll on THIS chain: confirmed live that Spring
+                        // Security's OAuth2-resource-server enforcement from this very chain
+                        // (WWW-Authenticate: Bearer) is what actually intercepts management-port
+                        // requests too — a dedicated @ManagementContextConfiguration(CHILD)
+                        // SecurityFilterChain bean was tried and did NOT take effect (its own
+                        // chain got constructed but was never the one invoked), so this
+                        // permitAll stays the effective (and only working) way to keep the
+                        // management port from requiring app-level auth on top of the network
+                        // boundary.
                         .requestMatchers(
+                                "/actuator/health",
+                                "/actuator/health/**",
+                                "/actuator/prometheus",
+                                "/actuator/info",
                                 "/error",
                                 // Swagger / OpenAPI (springdoc)
                                 "/v3/api-docs",

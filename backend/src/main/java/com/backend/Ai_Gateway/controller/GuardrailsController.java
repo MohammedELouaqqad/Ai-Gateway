@@ -1,6 +1,9 @@
 package com.backend.Ai_Gateway.controller;
 
 import com.backend.Ai_Gateway.config.GuardrailsProperties;
+import com.backend.Ai_Gateway.enums.AuditAction;
+import com.backend.Ai_Gateway.services.AuditDiffs;
+import com.backend.Ai_Gateway.services.AuditService;
 import com.backend.Ai_Gateway.services.UsageGuardService;
 import com.backend.Ai_Gateway.services.UserService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -20,10 +23,12 @@ public class GuardrailsController {
 
     private final UsageGuardService usageGuardService;
     private final UserService userService;
+    private final AuditService auditService;
 
-    public GuardrailsController(UsageGuardService usageGuardService, UserService userService) {
+    public GuardrailsController(UsageGuardService usageGuardService, UserService userService, AuditService auditService) {
         this.usageGuardService = usageGuardService;
         this.userService = userService;
+        this.auditService = auditService;
     }
 
     @GetMapping("/config")
@@ -42,6 +47,11 @@ public class GuardrailsController {
 
     @PutMapping("/config")
     public Map<String, Object> updateConfig(@RequestBody GuardrailsConfigUpdateRequest request) {
+        // Snapshot scalars before the swap — GuardrailsRuntimeConfig itself never mutates the
+        // object effectiveConfig() returns (copy-on-write), but snapshotting here keeps this
+        // diff correct without a reader needing to know that internal detail.
+        Map<String, Object> before = guardrailsDiffFields(usageGuardService.effectiveConfig());
+
         usageGuardService.updateRuntimeConfig(
                 request.enabled(),
                 request.requestsPerMinute(),
@@ -49,7 +59,20 @@ public class GuardrailsController {
                 request.globalBudgetPerDayEur(),
                 request.userBudgetPerDayEur()
         );
+
+        Map<String, Object> after = guardrailsDiffFields(usageGuardService.effectiveConfig());
+        auditService.record(AuditAction.GUARDRAILS_UPDATE, "GUARDRAILS", null, null, AuditDiffs.diff(before, after));
         return config();
+    }
+
+    private static Map<String, Object> guardrailsDiffFields(GuardrailsProperties cfg) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("enabled", cfg.isEnabled());
+        fields.put("requestsPerMinute", cfg.getRateLimit().getRequestsPerMinute());
+        fields.put("requestsPerDay", cfg.getRateLimit().getRequestsPerDay());
+        fields.put("globalBudgetPerDayEur", cfg.getBudget().getGlobalPerDayEur());
+        fields.put("userBudgetPerDayEur", cfg.getBudget().getUserPerDayEur());
+        return fields;
     }
 
     @GetMapping("/status")

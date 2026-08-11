@@ -326,8 +326,14 @@ public class ChatService {
             if (!conversationService.verifyProprty(userId, conversationId)) {
                 throw new UnauthorizedException("Vous n'êtes pas propriétaire de cette conversation");
             }
-            return conversationRepository.findById(conversationId)
+            Conversation conversation = conversationRepository.findById(conversationId)
                     .orElseThrow(() -> new RessourceNotFoundException("Conversation not found"));
+            // Trashed conversations don't silently come back to life via a stray chat request —
+            // the client must restore it explicitly first (POST /conversations/{id}/restore).
+            if (conversation.getDeletedAt() != null) {
+                throw new RessourceNotFoundException("Conversation not found");
+            }
+            return conversation;
         }
         return conversationService.createConversation(userId);
     }

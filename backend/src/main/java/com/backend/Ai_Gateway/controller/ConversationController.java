@@ -36,6 +36,8 @@ public class ConversationController {
         return conversationService.renameConversation(userService.requireCurrentUserId(), id, body.get("title"));
     }
 
+    /** First call moves the conversation to trash; calling it again on an already-trashed
+     *  conversation purges it for good (see {@link ConversationService#deleteConversation}). */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         conversationService.deleteConversation(userService.requireCurrentUserId(), id);

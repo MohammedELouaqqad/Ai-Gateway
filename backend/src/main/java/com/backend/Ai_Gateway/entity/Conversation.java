@@ -24,6 +24,14 @@ public class Conversation {
     private Instant createdAt;
     private Instant updatedAt;
 
+    /**
+     * Null = active. On delete, the row is kept with this timestamp set — an internal safety
+     * margin, not a user-facing trash/undo feature (nothing restores it) — and purged for good
+     * by {@link com.backend.Ai_Gateway.services.ConversationRetentionJob} once past the
+     * retention window. To the user, the conversation is simply gone right away.
+     */
+    private Instant deletedAt;
+
     /** Owner — ignoré en JSON API pour éviter fuites / LazyInit ; chargé EAGER pour les checks ownership. */
     @JsonIgnore
     @ManyToOne(fetch = FetchType.EAGER)

@@ -1,6 +1,8 @@
 package com.backend.Ai_Gateway.controller;
 
 import com.backend.Ai_Gateway.entity.User;
+import com.backend.Ai_Gateway.enums.AuditAction;
+import com.backend.Ai_Gateway.services.AuditService;
 import com.backend.Ai_Gateway.services.UserService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,9 +23,11 @@ import java.util.List;
 public class UserAdminController {
 
     private final UserService userService;
+    private final AuditService auditService;
 
-    public UserAdminController(UserService userService) {
+    public UserAdminController(UserService userService, AuditService auditService) {
         this.userService = userService;
+        this.auditService = auditService;
     }
 
     @GetMapping
@@ -34,6 +38,11 @@ public class UserAdminController {
     @PatchMapping("/{id}/status")
     public User toggleStatus(@PathVariable Long id) {
         Long actingUserId = userService.requireCurrentUserId();
-        return userService.toggleStatus(id, actingUserId);
+        User updated = userService.toggleStatus(id, actingUserId);
+        auditService.record(
+                updated.isEnabled() ? AuditAction.USER_ENABLE : AuditAction.USER_DISABLE,
+                "USER", updated.getId(), updated.getUsername(), null
+        );
+        return updated;
     }
 }
