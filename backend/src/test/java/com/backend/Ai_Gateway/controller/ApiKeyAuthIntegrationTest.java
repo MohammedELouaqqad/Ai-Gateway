@@ -1,8 +1,10 @@
 package com.backend.Ai_Gateway.controller;
 
 import com.backend.Ai_Gateway.config.TestJwtConfig;
+import com.backend.Ai_Gateway.repositories.UserRepository;
 import com.backend.Ai_Gateway.support.AbstractIntegrationTest;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -47,6 +49,16 @@ class ApiKeyAuthIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @BeforeEach
+    void seedTestUser() {
+        // New users are enabled=false by default (admin approval required) — self-service
+        // API key generation below resolves "current user" and needs it pre-seeded.
+        TestJwtConfig.ensureEnabledTestUser(userRepository);
+    }
 
     @Test
     void missingKeyIsRejected() throws Exception {

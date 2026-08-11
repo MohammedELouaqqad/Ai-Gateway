@@ -33,6 +33,11 @@ public class UserService {
      * Tolère les doublons historiques sur {@code keycloak_id} (renvoie le plus ancien id).
      * Rejette un compte désactivé par un admin (voir {@link #toggleStatus}) — ne le
      * réactive jamais tout seul, contrairement à l'ancien comportement.
+     * <p>
+     * Rejette aussi un email explicitement marqué non vérifié ({@code email_verified: false}).
+     * Défense en profondeur : si le realm Keycloak a "Verify email" activé (recommandé dès que
+     * l'inscription publique l'est aussi), un compte non vérifié ne devrait déjà jamais obtenir
+     * de JWT valide — ce contrôle couvre le cas d'un realm mal configuré.
      */
     @Transactional
     public User requireCurrentUser() {
@@ -40,6 +45,9 @@ public class UserService {
         String keycloakId = jwt.getSubject();
         if (keycloakId == null || keycloakId.isBlank()) {
             throw new UnauthorizedException("JWT subject (sub) manquant");
+        }
+        if (Boolean.FALSE.equals(jwt.getClaimAsBoolean("email_verified"))) {
+            throw new UnauthorizedException("Email non vérifié");
         }
 
         List<User> matches = userRepository.findAllByKeycloakIdOrderByIdAsc(keycloakId);
@@ -125,6 +133,14 @@ public class UserService {
         return dirty ? userRepository.save(user) : user;
     }
 
+    /**
+     * Un compte tout juste vu pour la première fois démarre {@code enabled=false} — qu'il
+     * vienne d'une auto-inscription publique Keycloak ou d'un compte créé à la main par un
+     * admin dans Keycloak, l'app ne peut pas distinguer les deux à ce stade (aucun claim JWT
+     * standard ne le dit). Un ADMIN doit l'activer explicitement dans Users avant tout accès —
+     * seule façon d'éviter qu'une inscription publique ouverte consomme du budget LLM sans
+     * contrôle. Voir {@link #toggleStatus}.
+     */
     private User createFromJwt(Jwt jwt, String keycloakId) {
         User user = new User();
         user.setKeycloakId(keycloakId);
@@ -132,7 +148,7 @@ public class UserService {
                 ? claim(jwt, "preferred_username")
                 : keycloakId);
         user.setEmail(claim(jwt, "email"));
-        user.setEnabled(true);
+        user.setEnabled(false);
         user.setCreatedAt(Instant.now());
         return userRepository.save(user);
     }

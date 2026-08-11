@@ -7,6 +7,7 @@ import com.backend.Ai_Gateway.repositories.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -62,6 +63,42 @@ class UserServiceTest {
 
         // syncProfile may save for username/email drift, but must never flip enabled back to true.
         assertThat(disabled.isEnabled()).isFalse();
+    }
+
+    /**
+     * The regression this exists to catch: a brand-new user (self-registration or an
+     * admin-created Keycloak account seen for the first time) must NOT get instant access —
+     * an ADMIN has to enable it explicitly. See {@link UserService#createFromJwt}.
+     */
+    @Test
+    void requireCurrentUser_newUser_isCreatedDisabled_andRejected() {
+        when(userRepository.findAllByKeycloakIdOrderByIdAsc("some-sub")).thenReturn(List.of());
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThatThrownBy(() -> userService.requireCurrentUser())
+                .isInstanceOf(UnauthorizedException.class);
+
+        ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(captor.capture());
+        assertThat(captor.getValue().isEnabled()).isFalse();
+    }
+
+    @Test
+    void requireCurrentUser_emailExplicitlyUnverified_isRejected() {
+        Jwt jwt = Jwt.withTokenValue("t")
+                .header("alg", "none")
+                .subject("some-sub")
+                .claim("preferred_username", "someuser")
+                .claim("email", "some@example.com")
+                .claim("email_verified", false)
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+        SecurityContextHolder.setContext(new SecurityContextImpl(new JwtAuthenticationToken(jwt)));
+
+        assertThatThrownBy(() -> userService.requireCurrentUser())
+                .isInstanceOf(UnauthorizedException.class);
+        verify(userRepository, never()).findAllByKeycloakIdOrderByIdAsc(any());
     }
 
     @Test

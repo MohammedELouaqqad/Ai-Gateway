@@ -2,6 +2,7 @@ package com.backend.Ai_Gateway.controller;
 
 import com.backend.Ai_Gateway.entity.Model;
 import com.backend.Ai_Gateway.entity.Provider;
+import com.backend.Ai_Gateway.entity.User;
 import com.backend.Ai_Gateway.enums.ProviderLocation;
 import com.backend.Ai_Gateway.enums.ProviderType;
 import com.backend.Ai_Gateway.provider.LLMProviderRouter;
@@ -9,6 +10,7 @@ import com.backend.Ai_Gateway.provider.dto.ChatChunk;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.backend.Ai_Gateway.repositories.ModelRepository;
 import com.backend.Ai_Gateway.repositories.ProviderRepository;
+import com.backend.Ai_Gateway.repositories.UserRepository;
 import com.backend.Ai_Gateway.services.UsageGuardService;
 import com.backend.Ai_Gateway.support.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
@@ -55,6 +57,9 @@ class AuthAndChatIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private UsageGuardService usageGuardService;
 
+    @Autowired
+    private UserRepository userRepository;
+
     @MockitoBean
     private LLMProviderRouter llmProviderRouter;
 
@@ -88,6 +93,18 @@ class AuthAndChatIntegrationTest extends AbstractIntegrationTest {
         usageGuardService.resetRuntimeToDefaults();
     }
 
+    // New users are enabled=false by default (admin approval required) — /api/chat resolves
+    // "current user", so each fresh test subject below needs pre-seeding.
+    private void persistEnabledUser(String keycloakId, String username, String email) {
+        User user = new User();
+        user.setKeycloakId(keycloakId);
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setEnabled(true);
+        user.setCreatedAt(Instant.now());
+        userRepository.save(user);
+    }
+
     @Test
     void unauthenticated_api_returns401() throws Exception {
         mockMvc.perform(get("/api/profile"))
@@ -106,10 +123,13 @@ class AuthAndChatIntegrationTest extends AbstractIntegrationTest {
         when(llmProviderRouter.chat(any(), any()))
                 .thenReturn(new ChatResponse("bonjour-test", 3, 2));
 
+        String subject = "chat-it-" + UUID.randomUUID();
+        persistEnabledUser(subject, "chatuser", "chat@ai-gateway.local");
+
         mockMvc.perform(post("/api/chat")
                         .with(jwt()
                                 .jwt(j -> j
-                                        .subject("chat-it-" + UUID.randomUUID())
+                                        .subject(subject)
                                         .claim("preferred_username", "chatuser")
                                         .claim("email", "chat@ai-gateway.local"))
                                 .authorities(new SimpleGrantedAuthority("ROLE_USER")))
@@ -136,6 +156,7 @@ class AuthAndChatIntegrationTest extends AbstractIntegrationTest {
                 .thenReturn(new ChatResponse("ok", 1, 1));
 
         String subject = "rpm-it-" + UUID.randomUUID();
+        persistEnabledUser(subject, "rpmuser", "rpm@ai-gateway.local");
         var userJwt = jwt()
                 .jwt(j -> j
                         .subject(subject)
@@ -170,10 +191,13 @@ class AuthAndChatIntegrationTest extends AbstractIntegrationTest {
                 ChatChunk.completed("stop", ChatChunk.TokenUsage.of(2, 1))
         ));
 
+        String subject = "stream-it-" + UUID.randomUUID();
+        persistEnabledUser(subject, "streamuser", "stream@ai-gateway.local");
+
         MvcResult mvcResult = mockMvc.perform(post("/api/chat/stream")
                         .with(jwt()
                                 .jwt(j -> j
-                                        .subject("stream-it-" + UUID.randomUUID())
+                                        .subject(subject)
                                         .claim("preferred_username", "streamuser")
                                         .claim("email", "stream@ai-gateway.local"))
                                 .authorities(new SimpleGrantedAuthority("ROLE_USER")))

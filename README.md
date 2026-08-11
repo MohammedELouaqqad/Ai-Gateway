@@ -21,7 +21,7 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React), compatible *
 | Redis garde-fous | RPM/RPD/budget partagés (opt-in `APP_REDIS_ENABLED`) — Postgres = vérité |
 | Santé système (`/admin/health`) | ADMIN — Gateway, Postgres, Prometheus + conso par utilisateur |
 | Prompt templates | CRUD + insert chat (`{{content}}`) |
-| Auth | Keycloak JWT (Resource Server) sur `/api/**` — find-or-create user via `sub`. Clé API sur `/v1/**` (chaîne de sécurité séparée) |
+| Auth | Keycloak JWT (Resource Server) sur `/api/**` — find-or-create user via `sub`, **désactivé par défaut** à la première connexion (approbation ADMIN requise, voir section Keycloak). Clé API sur `/v1/**` (chaîne de sécurité séparée) |
 | Monitoring ops | Prometheus + Grafana (JVM / HTTP / usage par user-provider) — voir [monitoring/README.md](monitoring/README.md) |
 
 **Règle streaming :** ajouter un modèle sous un provider existant (Ollama/OpenAI/Azure/vLLM/SGLang) streame automatiquement. Un **nouveau type de provider** au-delà de ces 5 exige un adaptateur développeur (sous-classe de `OpenAiCompatibleProvider` si le protocole est OpenAI-compatible).
@@ -280,6 +280,23 @@ Deux bases sur ce serveur (recommandé — ne pas mélanger les schémas Keycloa
 Assignez au moins `USER` (ou `ADMIN`) à chaque compte. Sans `ADMIN`, les boutons d’admin sont masqués côté front et l’API répond **403**.
 
 **Note `/api/admin/users` :** gère uniquement l'activation/désactivation du compte local (table `users`) — **pas** les rôles, qui restent 100 % Keycloak (aucun champ rôle en base côté app). Un compte désactivé est rejeté au prochain appel (`/api/**` **et** `/v1/**` via ses clés API), et ne se réactive plus jamais tout seul à la reconnexion (bug corrigé).
+
+#### Inscription publique (self-registration)
+
+Le login est **entièrement délégué** à la page hébergée par Keycloak (Authorization Code + PKCE, pas de formulaire côté React) — activer l'inscription publique est donc un simple toggle dans la console d'admin Keycloak, **pas du code**. Mais côté app, tout nouveau compte vu pour la première fois (auto-inscrit ou créé à la main par un admin dans Keycloak — l'app ne peut pas distinguer les deux) démarre **`enabled=false`** : un ADMIN doit l'activer explicitement dans **Users & Rôles** avant tout accès. Sans ça, une inscription publique ouverte laisserait n'importe qui avec un email consommer du budget LLM sans contrôle.
+
+Checklist realm Keycloak avant d'activer `Realm Settings → Login → User registration` :
+
+| Réglage | Pourquoi |
+|---------|----------|
+| **User registration** ON | Affiche le lien "Register" sur la page de login |
+| **Verify email** ON | Sans ça, n'importe quel email (même pas possédé) suffit pour un compte fonctionnel — Keycloak bloque l'émission du JWT tant que l'email n'est pas confirmé |
+| **SMTP** configuré (`Realm Settings → Email`) | Requis pour que l'email de vérification (et "mot de passe oublié") parte réellement — `start-dev` ne le configure pas par défaut |
+| **Default roles** = `USER` uniquement | À vérifier explicitement — un défaut mal réglé sur `ADMIN` serait catastrophique pour un compte auto-inscrit |
+| **Password policy** (`Authentication → Policies`) | Longueur/complexité minimale — le mot de passe est choisi par un utilisateur non vérifié au moment de l'inscription |
+| **Brute force detection** ON | Standard, protège aussi le formulaire d'inscription |
+
+**Défense en profondeur côté app :** `UserService.requireCurrentUser()` rejette aussi un JWT avec `email_verified: false` explicite — au cas où le realm serait mal configuré malgré la checklist ci-dessus.
 
 ```bash
 # Sans token → 401

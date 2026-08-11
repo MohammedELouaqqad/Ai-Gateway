@@ -1,7 +1,9 @@
 package com.backend.Ai_Gateway.controller;
 
 import com.backend.Ai_Gateway.config.TestJwtConfig;
+import com.backend.Ai_Gateway.repositories.UserRepository;
 import com.backend.Ai_Gateway.support.AbstractIntegrationTest;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -18,6 +20,16 @@ class ApiSmokeTest extends AbstractIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @BeforeEach
+    void seedTestUser() {
+        // New users are enabled=false by default (admin approval required) — the tests below
+        // that resolve "current user" (profile, usage, prompt templates) need this pre-seeded.
+        TestJwtConfig.ensureEnabledTestUser(userRepository);
+    }
 
     @Test
     void unauthenticatedRequestReturnsUnauthorized() throws Exception {

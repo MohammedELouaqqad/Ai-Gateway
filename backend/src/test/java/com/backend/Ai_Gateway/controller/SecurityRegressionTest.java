@@ -40,6 +40,7 @@ class SecurityRegressionTest extends AbstractIntegrationTest {
     @Test
     void bug01_messagesIdorReturnsForbiddenForNonOwner() throws Exception {
         User owner = persistUser(OWNER_SUB, "owner-user");
+        persistUser(OTHER_SUB, "other-user");
         Conversation conversation = new Conversation();
         conversation.setTitle("Conv owner");
         conversation.setUser(owner);
