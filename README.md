@@ -7,11 +7,12 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React), compatible *
 | Domaine | État |
 |---------|------|
 | **`/v1/chat/completions`, `/v1/models`** | Surface publique **OpenAI-compatible** — auth par clé API (`Authorization: Bearer sk-...`), pas Keycloak. Sync + streaming SSE (format `data: {...}` OpenAI standard) |
-| **Clés API** (Settings) | Génération (secret affiché **une seule fois**), liste, révocation — self-service par utilisateur |
-| Chat sync (`POST /api/chat`) | Ollama + OpenAI + Azure OpenAI (auth `api-key`, pas Bearer) |
-| Chat stream SSE (`POST /api/chat/stream`) | Hérité du **provider** (Ollama / OpenAI / Azure) — pas de config par modèle |
-| Conversations / messages | CRUD + historique |
-| Modèles / Fournisseurs | Admin + activation |
+| **Clés API** (Settings) | Génération (secret affiché **une seule fois**, expiration optionnelle Jamais/30j/90j/1an), liste, révocation — self-service par utilisateur |
+| Chat sync (`POST /api/chat`) | Ollama, OpenAI, Azure OpenAI (auth `api-key`, pas Bearer), vLLM, SGLang |
+| Chat stream SSE (`POST /api/chat/stream`) | Hérité du **provider** — pas de config par modèle |
+| Conversations / messages | CRUD + historique. Suppression = disparition immédiate côté user ; conservée ~30j en base comme filet de sécurité technique avant purge réelle (`ConversationRetentionJob`), pas une corbeille visible |
+| Modèles / Fournisseurs | Admin + activation. `baseUrl` validée à l'écriture (https obligatoire pour OpenAI/Azure, IP metadata cloud bloquée) |
+| **Journal d'audit** (`/admin/audit-log`, ADMIN) | Trace les actions admin réussies (users, providers, modèles, guardrails) — qui, quoi, cible, diff avant/après. Jamais de secret dans le diff (`apiKeyChanged` seulement) |
 | **Users & Rôles** (Settings, ADMIN) | Liste + activer/désactiver un compte local. Les **rôles** restent exclusivement gérés dans Keycloak (pas ici) |
 | Dashboard (`/dashboard`) | KPI récents (scopes 24h / 7j / 30j / session), taux d’erreur, latence moy., conso tokens/coût |
 | Usage (`/usage`) | Journal paginé (PostgreSQL), filtres, tendances, p50/p95/p99, export CSV |
@@ -23,9 +24,9 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React), compatible *
 | Auth | Keycloak JWT (Resource Server) sur `/api/**` — find-or-create user via `sub`. Clé API sur `/v1/**` (chaîne de sécurité séparée) |
 | Monitoring ops | Prometheus + Grafana (JVM / HTTP / usage par user-provider) — voir [monitoring/README.md](monitoring/README.md) |
 
-**Règle streaming :** ajouter un modèle sous Ollama/OpenAI/Azure streame automatiquement. Un **nouveau type de provider** (vLLM, SGLang…) exige un adaptateur développeur (sous-classe de `OpenAiCompatibleProvider` si le protocole est OpenAI-compatible — cas de vLLM/SGLang).
+**Règle streaming :** ajouter un modèle sous un provider existant (Ollama/OpenAI/Azure/vLLM/SGLang) streame automatiquement. Un **nouveau type de provider** au-delà de ces 5 exige un adaptateur développeur (sous-classe de `OpenAiCompatibleProvider` si le protocole est OpenAI-compatible).
 
-**Providers OpenAI-compatibles :** `OpenAIProvider` (Bearer) et `AzureOpenAIProvider` (header `api-key`, pas Bearer) sont deux classes distinctes partageant `OpenAiCompatibleProvider` — chaque famille de provider expose ses propres hooks (`applyAuth`, `defaultBaseUrl`, `resolveApiKey`). vLLM/SGLang ne sont pas encore câblés (enum `ProviderType` existe, aucun adaptateur écrit → 501).
+**Providers OpenAI-compatibles :** `OpenAIProvider`, `AzureOpenAIProvider`, `VllmProvider`, `SglangProvider` partagent tous `OpenAiCompatibleProvider` — chaque famille expose ses propres hooks (`applyAuth`, `defaultBaseUrl`, `resolveApiKey`, et pour Azure `chatPath`/`queryParams`). vLLM/SGLang parlent le même format OpenAI standard (`/chat/completions`), auth optionnelle (Bearer si `Provider.apiKey` renseigné, sinon aucun header — cas courant d'un serveur auto-hébergé sans clé), défauts `http://localhost:8000/v1` / `http://localhost:30000/v1`. Azure a un chemin d'URL différent (`/openai/deployments/{déploiement}/chat/completions?api-version=...`) — le **nom de déploiement Azure = `Model.name`** dans ce gateway, pas un champ séparé. `api-version` est **fixée en dur à `2024-06-01`** (constante `AzureOpenAIProvider.API_VERSION`) — choix assumé, pas un oubli : Azure retire ses versions selon un calendrier, donc à bumper (ou externaliser en config) si un déploiement en a besoin d'une autre.
 
 **Modèle local par défaut (seed) :** `llama3.2:1b` (Ollama). Le seed active Ollama + ce modèle comme défaut.
 
@@ -42,7 +43,7 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React), compatible *
 ```bash
 # 1. Base
 createdb Ai_Gateway_DB
-# ou Docker (nécessite un .env racine — cp .env.example .env, voir section Docker plus bas) :
+# ou Docker (nécessite un .env racine rempli — cp .env.example .env puis éditer, voir section Docker plus bas) :
 # docker compose up database
 
 # 2. Backend (:8080)
@@ -62,8 +63,9 @@ Ouvrir http://localhost:5173
 
 ```bash
 # 1. Requis avant tout démarrage — docker compose refuse de démarrer sans ce fichier
-#    (voir "⚠️ Identifiants par défaut" plus bas)
+#    ET sans valeurs non-vides dedans (voir "⚠️ Identifiants" plus bas)
 cp .env.example .env
+# ... puis éditer .env et renseigner un mot de passe pour chaque variable
 
 # 2. Ollama doit tourner sur l’hôte (Keycloak est dans Compose)
 docker compose --profile stack up --build -d
@@ -102,7 +104,7 @@ SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stac
 
 **Note prod réelle :** Compose convient pour un serveur unique / démo. Pour une prod HA, préférer Kubernetes ou un IdP managé ; Keycloak tourne déjà sur Postgres (`base keycloak`, même instance que l’app) — en prod utiliser `start` (pas `start-dev`) + HA.
 
-**⚠️ Identifiants :** `docker compose` refuse de démarrer sans `.env` (fail-closed — plus de repli silencieux sur `admin/admin`). `.env.example` fournit des valeurs pratiques pour le dev local (`postgres/postgres`, `admin/admin`, ...) — copier vers `.env` (racine, gitignored, lu automatiquement par `docker compose`) et y mettre de **vraies valeurs** avant tout déploiement atteignable au-delà de `localhost` (Postgres, Redis, Keycloak et Grafana ont tous leur port publié par défaut).
+**⚠️ Identifiants :** `docker compose` refuse de démarrer sans `.env` **ET** sans valeur non-vide pour chaque mot de passe (fail-closed — plus de repli silencieux sur `admin/admin`, et `.env.example` ne fournit délibérément aucune valeur toute prête pour ces champs, pour qu'un simple `cp` sans lecture ne puisse jamais aboutir à un déploiement avec des mots de passe faibles). Copier [.env.example](.env.example) vers `.env` (racine, gitignored, lu automatiquement par `docker compose`), l'éditer, et y mettre de **vraies valeurs** — y compris pour un usage purement local (Postgres, Redis, Keycloak et Grafana ont tous leur port publié par défaut, donc atteignables dès que le firewall de la machine ne bloque pas).
 
 ## Premier test
 
@@ -141,11 +143,12 @@ SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stac
 | GET | `/api/conversations/{id}/messages` | Messages |
 | GET/POST | `/api/models` | Modèles (`supportsStreaming` hérité du provider) |
 | GET/POST | `/api/providers` | Fournisseurs |
-| POST | `/api/api-keys` | Générer une clé (secret renvoyé **une fois**, jamais stocké en clair) |
-| GET | `/api/api-keys` | Lister ses propres clés (préfixe + statut, jamais le secret) |
+| POST | `/api/api-keys` | Générer une clé (secret renvoyé **une fois**, jamais stocké en clair ; `expiresInDays` optionnel) |
+| GET | `/api/api-keys` | Lister ses propres clés (préfixe + statut + expiration, jamais le secret) |
 | PATCH | `/api/api-keys/{id}/revoke` | Révoquer sa propre clé |
 | GET | `/api/admin/users` | Lister les utilisateurs locaux (**ADMIN**) |
 | PATCH | `/api/admin/users/{id}/status` | Activer/désactiver un utilisateur (**ADMIN**, pas son propre compte) |
+| GET | `/api/admin/audit-log?page&size&action&from&to` | Journal des actions admin, paginé (**ADMIN**) |
 | GET | `/api/usage` | Liste complète user (compat ; préférer `/logs`) |
 | GET | `/api/usage/summary?from&to` | Agrégats : tokens, coût, requêtes, errorRate, avgLatencyMs |
 | GET | `/api/usage/logs?page&size&sort&…` | Journal paginé (filtres model/provider/location/q/from/to) |
@@ -177,6 +180,8 @@ curl -N -s -X POST http://localhost:8080/v1/chat/completions \
 
 Erreurs au format OpenAI (`{"error":{"message","type","code"}}`), pas le format `/api/*` interne. Guardrails (rate limit + budget) et usage logging s'appliquent identiquement aux deux surfaces. Un utilisateur désactivé (`/api/admin/users`) voit ses clés API rejetées aussi, pas seulement son accès humain.
 
+**Limites de requête** : `messages[]` plafonné à 200 entrées, `content` à la même taille max que le chat interne, corps de requête rejeté (413) au-delà de ~20 Mo avant même désérialisation JSON — voir `ContentLimits`/`MaxRequestSizeFilter`.
+
 ### Garde-fous LLM (rate limit + budget)
 
 Point de passage : `ChatService` (sync + stream), **avant** tout appel provider.
@@ -195,7 +200,7 @@ Test : `scripts/test-guardrails.sh`.
 
 #### Redis (opt-in) — RPM / RPD / budget partagés
 
-- Compose : service `redis:7-alpine`, `noeviction`, password `${REDIS_PASSWORD:-changeme}`  
+- Compose : service `redis:7-alpine`, `noeviction`, password requis via `.env` racine (`REDIS_PASSWORD`, fail-closed — voir section Docker plus haut)  
 - Activation stack : `APP_REDIS_ENABLED=true` (déjà dans Compose backend)  
 - Local sans Redis : `APP_REDIS_ENABLED=false` → stores **in-memory** (comportement historique)  
 - Scripts Lua : `backend/src/main/resources/redis/*.lua`  
@@ -238,6 +243,8 @@ docker compose up -d prometheus grafana
 - Grafana : http://localhost:3000 (`admin` / `admin`)  
 - Détails : [monitoring/README.md](monitoring/README.md)
 
+**Actuator sur port séparé :** `/actuator/*` (dont `/actuator/prometheus`, sans auth applicative) écoute sur `management.server.port` (8081 par défaut), **jamais publié à l'hôte** dans `docker-compose.yml` — seul le réseau Docker interne (Prometheus) l'atteint. Le port API (8080, publié) ne sert aucune route actuator.
+
 ### Auth Keycloak
 
 Keycloak est démarré par Compose (profil `stack`) sur le port **8180**.
@@ -268,7 +275,7 @@ Deux bases sur ce serveur (recommandé — ne pas mélanger les schémas Keycloa
 |------|----------------|
 | `USER` | Chat, conversations, templates, dashboard, usage, profil |
 | `DEVELOPER` | Comme USER + items roadmap visibles dans le menu |
-| `ADMIN` | Mutations Models/Providers + `/observability`, `/admin/health`, `/rate-limiting`, `/api/usage/by-user`, `/api/admin/users` |
+| `ADMIN` | Mutations Models/Providers + `/observability`, `/admin/health`, `/admin/audit-log`, `/rate-limiting`, `/api/usage/by-user`, `/api/admin/users` |
 
 Assignez au moins `USER` (ou `ADMIN`) à chaque compte. Sans `ADMIN`, les boutons d’admin sont masqués côté front et l’API répond **403**.
 
@@ -300,10 +307,10 @@ Couverture prioritaire ajoutée :
 
 | Type | Exemples |
 |------|----------|
-| Unitaire | `UsageGuardServiceTest` (RPM/RPD/budget/D1), `ModelPricingServiceTest`, `ChatServiceBudgetLifecycleTest` (release/confirm), `InMemoryGuardStoresTest`, `ProviderFailureClassifierTest`, `ApiKeyServiceTest` (hash/révocation/user désactivé), `UserServiceTest` (enforcement compte désactivé, auto-toggle) |
-| Provider HTTP réel | `OpenAiCompatibleProviderTest` (Bearer vs `api-key`, SSE), `AzureOpenAIProviderTest` |
+| Unitaire | `UsageGuardServiceTest` (RPM/RPD/budget/D1), `ModelPricingServiceTest`, `ChatServiceBudgetLifecycleTest` (release/confirm), `InMemoryGuardStoresTest`, `ProviderFailureClassifierTest`, `ApiKeyServiceTest` (hash/révocation/user désactivé/expiration), `UserServiceTest` (enforcement compte désactivé, auto-toggle), `ConversationServiceTest` (suppression/purge), `ProviderBaseUrlValidatorTest` (SSRF), `AuditActorTest`/`AuditServiceTest`/`AuditDiffsTest` |
+| Provider HTTP réel | `OpenAiCompatibleProviderTest` (Bearer vs `api-key` vs optionnel, chemin Azure + `api-version`, SSE), `AzureOpenAIProviderTest`, `VllmProviderTest`, `SglangProviderTest` |
 | Intégration Redis | `RedisGuardStoresIT` (Testcontainers `redis:7-alpine`, skip si Docker absent) |
-| Intégration HTTP | `AuthAndChatIntegrationTest` (401/403, chat mock LLM), `ApiSmokeTest`, `SecurityRegressionTest`, `ApiKeyAuthIntegrationTest`, `V1ChatApiTest` (`/v1/*` sync+stream+guardrails), `UserAdminControllerIntegrationTest` |
+| Intégration HTTP | `AuthAndChatIntegrationTest` (401/403, chat mock LLM), `ApiSmokeTest`, `SecurityRegressionTest`, `ApiKeyAuthIntegrationTest`, `V1ChatApiTest` (`/v1/*` sync+stream+guardrails), `UserAdminControllerIntegrationTest`, `AuditLogIntegrationTest`, `ManagementPortSecurityTest` (actuator sur port séparé, vraie requête HTTP) |
 
 Prérequis IT Spring : PostgreSQL joignable (comme les tests existants). Redis IT : Docker.
 
@@ -318,7 +325,6 @@ Seule la doc UI est publique ; les routes elles-mêmes restent protégées.
 
 ## Roadmap (non livré)
 
-- Adaptateurs stream vLLM / SGLang (enum `ProviderType` existe, aucune classe `LLMProvider` écrite — 501 aujourd'hui)
 - Gestion des rôles depuis l'app (nécessiterait l'API Admin Keycloak — pas intégrée ; `/api/admin/users` gère seulement activer/désactiver un compte local)
 - Alertmanager (les règles Prometheus existent et s'évaluent, mais rien n'est notifié activement — Slack/email à brancher)
 - Pricing éditable admin (persisté BDD ; runtime UI existe déjà)

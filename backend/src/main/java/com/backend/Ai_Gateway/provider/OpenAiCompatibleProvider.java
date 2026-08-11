@@ -18,10 +18,13 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.util.UriBuilder;
 import reactor.core.publisher.Flux;
 
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 
 /**
@@ -59,7 +62,7 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
                 .build();
 
         OpenAIChatResponse response = client.post()
-                .uri("/chat/completions")
+                .uri(uriBuilder -> buildChatUri(uriBuilder, provider, request))
                 .body(new OpenAIChatRequest(resolveModelRef(provider, request), messages))
                 .retrieve()
                 .body(OpenAIChatResponse.class);
@@ -97,7 +100,7 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
         // Buffer lines across DataBuffers: events are often larger than one TCP chunk.
         StreamLineBuffer lineBuffer = new StreamLineBuffer();
         return client.post()
-                .uri("/chat/completions")
+                .uri(uriBuilder -> buildChatUri(uriBuilder, provider, request))
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON, MediaType.ALL)
                 .bodyValue(OpenAIStreamChatRequest.of(resolveModelRef(provider, request), messages))
@@ -131,6 +134,31 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
      */
     protected String resolveModelRef(Provider provider, ChatRequest request) {
         return request.model();
+    }
+
+    /**
+     * Request path, relative to {@code Provider.baseUrl}. Default matches OpenAI/Ollama/vLLM/
+     * SGLang, which all speak the same {@code /chat/completions} shape — override only for a
+     * family member with a genuinely different path (e.g. Azure's deployment-scoped route).
+     */
+    protected String chatPath(Provider provider, ChatRequest request) {
+        return "/chat/completions";
+    }
+
+    /**
+     * Extra query params for the chat/stream call. Empty for every family member except Azure,
+     * which requires {@code api-version} on every request.
+     */
+    protected Map<String, String> queryParams(Provider provider, ChatRequest request) {
+        return Map.of();
+    }
+
+    private URI buildChatUri(UriBuilder uriBuilder, Provider provider, ChatRequest request) {
+        UriBuilder builder = uriBuilder.path(chatPath(provider, request));
+        for (Map.Entry<String, String> param : queryParams(provider, request).entrySet()) {
+            builder = builder.queryParam(param.getKey(), param.getValue());
+        }
+        return builder.build();
     }
 
     private String dataBufferToString(DataBuffer dataBuffer) {

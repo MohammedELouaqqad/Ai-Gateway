@@ -9,20 +9,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ProviderCapabilitiesTest {
 
     @Test
-    void ollamaOpenAiAzure_haveAdapters() {
-        assertTrue(ProviderCapabilities.hasChatAdapter(ProviderType.OLLAMA));
-        assertTrue(ProviderCapabilities.hasStreamAdapter(ProviderType.OLLAMA));
-        assertTrue(ProviderCapabilities.hasChatAdapter(ProviderType.OPENAI));
-        assertTrue(ProviderCapabilities.hasStreamAdapter(ProviderType.OPENAI));
-        assertTrue(ProviderCapabilities.hasChatAdapter(ProviderType.AZURE_OPENAI));
-        assertTrue(ProviderCapabilities.hasStreamAdapter(ProviderType.AZURE_OPENAI));
+    void everyProviderType_hasBothAdapters() {
+        for (ProviderType type : ProviderType.values()) {
+            assertTrue(ProviderCapabilities.hasChatAdapter(type), () -> type + " should have a chat adapter");
+            assertTrue(ProviderCapabilities.hasStreamAdapter(type), () -> type + " should have a stream adapter");
+        }
     }
 
     @Test
-    void sglangVllm_haveNoAdaptersInThisProject() {
-        assertFalse(ProviderCapabilities.hasChatAdapter(ProviderType.SGLANG));
-        assertFalse(ProviderCapabilities.hasStreamAdapter(ProviderType.SGLANG));
-        assertFalse(ProviderCapabilities.hasChatAdapter(ProviderType.VLLM));
-        assertFalse(ProviderCapabilities.hasStreamAdapter(ProviderType.VLLM));
+    void nullType_hasNoAdapter() {
+        assertFalse(ProviderCapabilities.hasChatAdapter(null));
+        assertFalse(ProviderCapabilities.hasStreamAdapter(null));
     }
 }

@@ -2,7 +2,6 @@ package com.backend.Ai_Gateway.provider;
 
 import com.backend.Ai_Gateway.entity.Provider;
 import com.backend.Ai_Gateway.enums.MessageRole;
-import com.backend.Ai_Gateway.enums.ProviderType;
 import com.backend.Ai_Gateway.provider.dto.ChatChunk;
 import com.backend.Ai_Gateway.provider.dto.ChatMessage;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
@@ -10,7 +9,6 @@ import com.backend.Ai_Gateway.provider.dto.ChatResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -22,7 +20,6 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -68,32 +65,10 @@ class OpenAiCompatibleProviderTest {
     }
 
     @Test
-    void chat_azureProvider_sendsApiKeyHeaderNotBearer() {
-        RestClient.Builder restBuilder = RestClient.builder();
-        MockRestServiceServer server = MockRestServiceServer.bindTo(restBuilder).build();
-        AzureOpenAIProvider provider = new AzureOpenAIProvider(restBuilder, WebClient.builder(), new ObjectMapper());
-
-        Provider providerRow = new Provider();
-        providerRow.setApiKey("azure-secret");
-        providerRow.setBaseUrl("https://my-resource.openai.azure.com");
-
-        server.expect(requestTo("https://my-resource.openai.azure.com/chat/completions"))
-                .andExpect(header("api-key", "azure-secret"))
-                .andExpect(headerDoesNotExist("Authorization"))
-                .andRespond(withSuccess(SAMPLE_CHAT_RESPONSE, MediaType.APPLICATION_JSON));
-
-        ChatResponse response = provider.chat(providerRow, sampleRequest);
-
-        assertThat(response.content()).isEqualTo("hi");
-        server.verify();
-    }
-
-    @Test
     void chat_noAuthHeaderWhenKeyBlank_forOptionalAuthFamilyMember() {
         RestClient.Builder restBuilder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(restBuilder).build();
-        OptionalAuthTestProvider provider =
-                new OptionalAuthTestProvider(restBuilder, WebClient.builder(), new ObjectMapper());
+        VllmProvider provider = new VllmProvider(restBuilder, WebClient.builder(), new ObjectMapper());
 
         Provider providerRow = new Provider(); // no apiKey set — local server, no auth required
         providerRow.setBaseUrl("http://localhost:9999");
@@ -104,6 +79,47 @@ class OpenAiCompatibleProviderTest {
 
         provider.chat(providerRow, sampleRequest);
 
+        server.verify();
+    }
+
+    @Test
+    void chat_vllmProvider_sendsBearerAuthWhenKeyConfigured() {
+        RestClient.Builder restBuilder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restBuilder).build();
+        VllmProvider provider = new VllmProvider(restBuilder, WebClient.builder(), new ObjectMapper());
+
+        Provider providerRow = new Provider();
+        providerRow.setApiKey("vllm-secret");
+        providerRow.setBaseUrl("http://localhost:8000/v1");
+
+        server.expect(requestTo("http://localhost:8000/v1/chat/completions"))
+                .andExpect(header("Authorization", "Bearer vllm-secret"))
+                .andRespond(withSuccess(SAMPLE_CHAT_RESPONSE, MediaType.APPLICATION_JSON));
+
+        provider.chat(providerRow, sampleRequest);
+
+        server.verify();
+    }
+
+    @Test
+    void chat_azureProvider_hitsDeploymentScopedPathWithApiVersion() {
+        RestClient.Builder restBuilder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restBuilder).build();
+        AzureOpenAIProvider provider = new AzureOpenAIProvider(restBuilder, WebClient.builder(), new ObjectMapper());
+
+        Provider providerRow = new Provider();
+        providerRow.setApiKey("azure-secret");
+        providerRow.setBaseUrl("https://my-resource.openai.azure.com");
+
+        server.expect(requestTo(
+                        "https://my-resource.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-06-01"))
+                .andExpect(header("api-key", "azure-secret"))
+                .andExpect(headerDoesNotExist("Authorization"))
+                .andRespond(withSuccess(SAMPLE_CHAT_RESPONSE, MediaType.APPLICATION_JSON));
+
+        ChatResponse response = provider.chat(providerRow, sampleRequest);
+
+        assertThat(response.content()).isEqualTo("hi");
         server.verify();
     }
 
@@ -137,7 +153,9 @@ class OpenAiCompatibleProviderTest {
             AtomicReference<String> capturedAuth
     ) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/chat/completions", exchange -> {
+        // Azure's deployment-scoped path (see AzureOpenAIProvider#chatPath) — sampleRequest's
+        // model is "gpt-4o-mini", which becomes the deployment name in the URL.
+        server.createContext("/openai/deployments/gpt-4o-mini/chat/completions", exchange -> {
             capturedApiKey.set(exchange.getRequestHeaders().getFirst("api-key"));
             capturedAuth.set(exchange.getRequestHeaders().getFirst("Authorization"));
             String body = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"
@@ -151,39 +169,5 @@ class OpenAiCompatibleProviderTest {
         });
         server.start();
         return server;
-    }
-
-    /**
-     * Test-only double for a family member with optional auth (what VLLM/SGLANG will look
-     * like once built — not built here, see task scope). Proves the hook contract itself
-     * (no key configured -> no auth header sent) independent of any production subclass.
-     */
-    private static class OptionalAuthTestProvider extends OpenAiCompatibleProvider {
-        OptionalAuthTestProvider(RestClient.Builder r, WebClient.Builder w, ObjectMapper m) {
-            super(r, w, m);
-        }
-
-        @Override
-        public Set<ProviderType> types() {
-            return Set.of(ProviderType.VLLM);
-        }
-
-        @Override
-        protected String defaultBaseUrl() {
-            return "http://localhost:8000/v1";
-        }
-
-        @Override
-        protected String resolveApiKey(Provider provider) {
-            return provider.getApiKey();
-        }
-
-        @Override
-        protected void applyAuth(Provider provider, HttpHeaders headers) {
-            String key = resolveApiKey(provider);
-            if (key != null && !key.isBlank()) {
-                headers.setBearerAuth(key);
-            }
-        }
     }
 }

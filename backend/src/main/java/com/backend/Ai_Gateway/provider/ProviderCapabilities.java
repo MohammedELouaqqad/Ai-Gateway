@@ -4,8 +4,7 @@ import com.backend.Ai_Gateway.enums.ProviderType;
 
 /**
  * Indique si CE PROJET a écrit l'adaptateur, PAS si le provider distant
- * en est techniquement capable. SGLang / vLLM streament en réalité via
- * l'API OpenAI-compatible — {@code false} signifie seulement « pas encore câblé ici ».
+ * en est techniquement capable.
  */
 public final class ProviderCapabilities {
 
@@ -17,8 +16,7 @@ public final class ProviderCapabilities {
             return false;
         }
         return switch (type) {
-            case OLLAMA, OPENAI, AZURE_OPENAI -> true;
-            case SGLANG, VLLM -> false;
+            case OLLAMA, OPENAI, AZURE_OPENAI, SGLANG, VLLM -> true;
         };
     }
 
@@ -28,8 +26,7 @@ public final class ProviderCapabilities {
             return false;
         }
         return switch (type) {
-            case OLLAMA, OPENAI, AZURE_OPENAI -> true;
-            case SGLANG, VLLM -> false;
+            case OLLAMA, OPENAI, AZURE_OPENAI, SGLANG, VLLM -> true;
         };
     }
 }

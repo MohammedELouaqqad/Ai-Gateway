@@ -4,6 +4,7 @@ package com.backend.Ai_Gateway.entity;
 import com.backend.Ai_Gateway.enums.ProviderLocation;
 import com.backend.Ai_Gateway.enums.ProviderType;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -43,5 +44,10 @@ public class Provider {
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "provider")
     private List<UsageLog> usageLogs;
 
-
+    /** Lets the UI show "key configured" without ever re-exposing the value itself. */
+    @JsonProperty("apiKeyPresent")
+    @Transient
+    public boolean isApiKeyPresent() {
+        return apiKey != null && !apiKey.isBlank();
+    }
 }

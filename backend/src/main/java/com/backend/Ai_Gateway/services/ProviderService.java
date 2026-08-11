@@ -60,6 +60,9 @@ public class ProviderService {
         provider.setPriority(request.priority());
         provider.setEnabled(request.enabled());
         provider.setCreatedAt(Instant.now());
+        if (request.apiKey() != null && !request.apiKey().isBlank()) {
+            provider.setApiKey(request.apiKey().trim());
+        }
         return providerRepository.save(provider);
     }
 
@@ -82,6 +85,10 @@ public class ProviderService {
         }
         if (request.priority() != null) {
             provider.setPriority(request.priority());
+        }
+        // Blank/null = leave the stored key untouched — see UpdateProviderRequest javadoc for why.
+        if (request.apiKey() != null && !request.apiKey().isBlank()) {
+            provider.setApiKey(request.apiKey().trim());
         }
         return providerRepository.save(provider);
     }

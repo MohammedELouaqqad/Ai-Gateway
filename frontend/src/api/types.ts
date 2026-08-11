@@ -18,6 +18,8 @@ export interface ApiProvider {
   enabled: boolean
   priority?: number
   createdAt?: string
+  /** Never the key itself (never sent by the API) — just whether one is configured. */
+  apiKeyPresent?: boolean
 }
 
 export interface ApiModel {
@@ -52,6 +54,19 @@ export interface UpdateProviderRequest {
   name: string
   baseUrl?: string
   priority?: number
+  /** Omit/blank = leave the stored key untouched (never clears it — see backend for why). */
+  apiKey?: string
+}
+
+export interface CreateProviderRequest {
+  name: string
+  baseUrl?: string
+  type: ProviderType
+  location: ProviderLocation
+  enabled?: boolean
+  priority?: number
+  /** Optional — Ollama needs none, vLLM/SGLang treat it as optional too. */
+  apiKey?: string
 }
 
 export interface ApiConversation {

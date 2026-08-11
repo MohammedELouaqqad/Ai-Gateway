@@ -1,7 +1,8 @@
 # Dev local — AI Gateway
 #
-# Requis avant toute commande ci-dessous — les credentials n'ont plus de repli faible :
-#   cp .env.example .env
+# Requis avant toute commande ci-dessous — les credentials n'ont plus de repli faible,
+# et .env.example ne fournit aucune valeur toute prête pour eux :
+#   cp .env.example .env   # puis éditer .env et renseigner chaque mot de passe
 #
 # PostgreSQL seul :
 #   docker compose up database

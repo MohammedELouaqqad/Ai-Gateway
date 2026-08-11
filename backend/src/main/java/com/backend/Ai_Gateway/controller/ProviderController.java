@@ -56,14 +56,14 @@ public class ProviderController {
         // the call and re-read it after, its fields could reflect the post-update state by then.
         Provider existing = providerService.getProviderById(id);
         Map<String, Object> before = providerDiffFields(existing);
-        boolean apiKeyPresentBefore = hasApiKey(existing);
 
         Provider updated = providerService.updateProvider(id, request);
 
         Map<String, Object> details = new LinkedHashMap<>(AuditDiffs.diff(before, providerDiffFields(updated)));
-        boolean apiKeyPresentAfter = hasApiKey(updated);
-        if (apiKeyPresentBefore != apiKeyPresentAfter) {
-            // Never the value itself — only whether it changed.
+        // Same "was a real value actually supplied" predicate ProviderService uses to decide
+        // whether to touch the stored key — presence alone would miss "replaced an existing
+        // key with a different one" (both before/after are "present"). Never the value itself.
+        if (request.apiKey() != null && !request.apiKey().isBlank()) {
             details.put("apiKeyChanged", true);
         }
         auditService.record(AuditAction.PROVIDER_UPDATE, "PROVIDER", id, updated.getName(), details);

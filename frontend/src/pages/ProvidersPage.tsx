@@ -20,6 +20,7 @@ const emptyProviderForm = {
   type: 'OLLAMA' as ProviderType,
   location: 'LOCAL' as ProviderLocation,
   priority: '1',
+  apiKey: '',
 }
 
 function ProviderRow({
@@ -61,6 +62,13 @@ function ProviderRow({
       <td className="mono">{provider.priority ?? '—'}</td>
       <td>{provider.location === 'LOCAL' ? pages.providers.internal : pages.providers.cloud}</td>
       <td className="mono" style={{ fontSize: '0.75rem' }}>{provider.type}</td>
+      <td>
+        {provider.apiKeyPresent ? (
+          <Badge variant="success" dot>{pages.providers.apiKeyPresent}</Badge>
+        ) : (
+          <Badge variant="secondary" dot>{pages.providers.apiKeyAbsent}</Badge>
+        )}
+      </td>
       {canMutate && (
         <td>
           <div className="table-actions">
@@ -138,6 +146,7 @@ export function ProvidersPage() {
         location: form.location,
         enabled: false,
         priority: Number(form.priority) || 1,
+        apiKey: form.apiKey.trim() || undefined,
       })
       setForm(emptyProviderForm)
       await loadProviders()
@@ -163,6 +172,10 @@ export function ProvidersPage() {
     if (!name?.trim()) return
     const baseUrl = window.prompt(p.renameUrlPrompt, provider.baseUrl ?? '')
     if (baseUrl === null) return
+    // Always starts blank — the stored key is never re-displayed. Leaving it blank
+    // here means "don't touch the key", matching the backend's blank/null semantics.
+    const apiKey = window.prompt(p.renameApiKeyPrompt, '')
+    if (apiKey === null) return
 
     setError(null)
     try {
@@ -170,6 +183,7 @@ export function ProvidersPage() {
         name: name.trim(),
         baseUrl: baseUrl.trim() || undefined,
         priority: provider.priority,
+        apiKey: apiKey.trim() || undefined,
       })
       await loadProviders()
     } catch (e) {
@@ -271,6 +285,19 @@ export function ProvidersPage() {
               </select>
             </div>
             <div className="form-group">
+              <label className="form-label" htmlFor="provider-apikey">{p.apiKeyLabel}</label>
+              <input
+                id="provider-apikey"
+                type="password"
+                className="form-input"
+                value={form.apiKey}
+                onChange={(e) => setForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+                placeholder={p.apiKeyPlaceholder}
+                autoComplete="new-password"
+              />
+              <span className="form-hint">{p.apiKeyHint}</span>
+            </div>
+            <div className="form-group">
               <label className="form-label" htmlFor="provider-location">{common.location}</label>
               <select
                 id="provider-location"
@@ -316,6 +343,7 @@ export function ProvidersPage() {
                   <th scope="col">{common.priority}</th>
                   <th scope="col">{common.location}</th>
                   <th scope="col">{common.apiType}</th>
+                  <th scope="col">{p.apiKeyLabel}</th>
                   {canMutate && <th scope="col">{common.actions}</th>}
                 </tr>
               </thead>
@@ -332,7 +360,7 @@ export function ProvidersPage() {
                 ))}
                 {!loading && providers.length === 0 && (
                   <tr>
-                    <td colSpan={canMutate ? 7 : 6} className="table-empty">{p.empty}</td>
+                    <td colSpan={canMutate ? 8 : 7} className="table-empty">{p.empty}</td>
                   </tr>
                 )}
               </tbody>
