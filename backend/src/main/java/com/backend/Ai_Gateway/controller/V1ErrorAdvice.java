@@ -3,6 +3,8 @@ package com.backend.Ai_Gateway.controller;
 import com.backend.Ai_Gateway.exceptions.GuardrailsExceededException;
 import com.backend.Ai_Gateway.exceptions.ProviderNotImplementedException;
 import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -12,6 +14,8 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
  * OpenAI-shaped errors ({@code {"error":{message,type,param,code}}}) for {@code /v1/**} only
@@ -27,6 +31,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice(assignableTypes = {V1ChatController.class, V1ModelsController.class})
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class V1ErrorAdvice {
+
+    private static final Logger log = LoggerFactory.getLogger(V1ErrorAdvice.class);
 
     private record ErrorBody(OpenAiError error) {}
 
@@ -66,9 +72,32 @@ public class V1ErrorAdvice {
         return build(HttpStatus.NOT_IMPLEMENTED, ex.getMessage(), "invalid_request_error", "provider_not_implemented");
     }
 
+    @ExceptionHandler({RestClientResponseException.class, WebClientResponseException.class})
+    public ResponseEntity<ErrorBody> handleProviderHttpError(Exception ex) {
+        int status;
+        String body;
+        if (ex instanceof RestClientResponseException e) {
+            status = e.getStatusCode().value();
+            body = e.getResponseBodyAsString();
+        } else {
+            WebClientResponseException e = (WebClientResponseException) ex;
+            status = e.getStatusCode().value();
+            body = e.getResponseBodyAsString();
+        }
+        log.warn("Provider HTTP error: status={} body={}", status, body, ex);
+        String message = "Upstream provider error (HTTP " + status + ")"
+                + (body != null && !body.isBlank() ? ": " + truncate(body, 300) : "");
+        return build(HttpStatus.BAD_GATEWAY, message, "api_error", null);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorBody> handleGeneric(Exception ex) {
+        log.error("Unhandled exception in /v1/**", ex);
         return build(HttpStatus.BAD_GATEWAY, "Upstream provider error", "api_error", null);
+    }
+
+    private static String truncate(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max) + "…";
     }
 
     private static ResponseEntity<ErrorBody> build(HttpStatus status, String message, String type, String code) {

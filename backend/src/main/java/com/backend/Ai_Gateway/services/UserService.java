@@ -6,6 +6,7 @@ import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
 import com.backend.Ai_Gateway.repositories.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -15,7 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class UserService {
@@ -23,6 +26,15 @@ public class UserService {
     private static final Logger log = LoggerFactory.getLogger(UserService.class);
 
     private final UserRepository userRepository;
+
+    /**
+     * Confort dev uniquement — {@code true} sur le profil {@code dev} (application-dev.properties),
+     * {@code false} partout ailleurs (défaut de base + explicite en prod). Évite de recliquer
+     * "Activer" en admin à chaque inscription de test ; en prod le garde-fou budget reste intact
+     * par défaut (voir {@link #createFromJwt}).
+     */
+    @Value("${app.users.auto-enable-new:false}")
+    private boolean autoEnableNewUsers;
 
     public UserService(UserRepository userRepository) {
         this.userRepository = userRepository;
@@ -38,8 +50,15 @@ public class UserService {
      * Défense en profondeur : si le realm Keycloak a "Verify email" activé (recommandé dès que
      * l'inscription publique l'est aussi), un compte non vérifié ne devrait déjà jamais obtenir
      * de JWT valide — ce contrôle couvre le cas d'un realm mal configuré.
+     * <p>
+     * Délibérément <b>pas</b> {@code @Transactional} : si cette méthode l'était, le
+     * {@code save()} fait par {@link #createFromJwt} pour un nouveau compte serait annulé par
+     * le rollback automatique déclenché par le {@code throw} juste après ("Compte désactivé")
+     * — le nouvel utilisateur ne serait alors jamais persisté, et un ADMIN ne pourrait jamais
+     * le voir dans Users pour l'activer (bug réel, trouvé en test manuel). Chaque
+     * {@code save()}/requête de repository ci-dessous a déjà sa propre transaction courte via
+     * Spring Data JPA — pas besoin d'une transaction englobante pour ce flux find-or-create.
      */
-    @Transactional
     public User requireCurrentUser() {
         Jwt jwt = currentJwt();
         String keycloakId = jwt.getSubject();
@@ -73,7 +92,7 @@ public class UserService {
         return user;
     }
 
-    @Transactional
+    /** Same reasoning as {@link #requireCurrentUser()} — deliberately not {@code @Transactional}. */
     public Long requireCurrentUserId() {
         return requireCurrentUser().getId();
     }
@@ -140,6 +159,19 @@ public class UserService {
      * standard ne le dit). Un ADMIN doit l'activer explicitement dans Users avant tout accès —
      * seule façon d'éviter qu'une inscription publique ouverte consomme du budget LLM sans
      * contrôle. Voir {@link #toggleStatus}.
+     * <p>
+     * Deux exceptions, toutes deux sûres car elles ne concernent jamais l'auto-inscription
+     * publique (qui ne donne que le rôle {@code USER} par défaut — voir realm import,
+     * {@code default-roles-ai-gateway}) :
+     * <ul>
+     *   <li>{@code autoEnableNewUsers} (profil {@code dev} uniquement) — confort de test, jamais
+     *       actif par défaut ni en prod.</li>
+     *   <li>Rôle {@code ADMIN} présent dans le JWT — assigner ce rôle dans Keycloak est déjà un
+     *       geste délibéré d'un opérateur Keycloak, pas quelque chose qu'une inscription
+     *       publique peut obtenir. Sans ça, le tout premier admin d'un clone frais (aucun autre
+     *       admin encore activé pour l'activer) reste bloqué en boucle sans issue — un vrai
+     *       deadlock de bootstrap, corrigé ici.</li>
+     * </ul>
      */
     private User createFromJwt(Jwt jwt, String keycloakId) {
         User user = new User();
@@ -148,7 +180,7 @@ public class UserService {
                 ? claim(jwt, "preferred_username")
                 : keycloakId);
         user.setEmail(claim(jwt, "email"));
-        user.setEnabled(false);
+        user.setEnabled(autoEnableNewUsers || hasAdminRole(jwt));
         user.setCreatedAt(Instant.now());
         return userRepository.save(user);
     }
@@ -164,5 +196,15 @@ public class UserService {
     private static String claim(Jwt jwt, String name) {
         String value = jwt.getClaimAsString(name);
         return value != null && !value.isBlank() ? value : null;
+    }
+
+    /** Même source que {@code SecurityConfig.extractAuthorities} (realm_access.roles), lu ici en brut. */
+    @SuppressWarnings("unchecked")
+    private static boolean hasAdminRole(Jwt jwt) {
+        Map<String, Object> realmAccess = jwt.getClaim("realm_access");
+        if (realmAccess == null || !(realmAccess.get("roles") instanceof Collection<?> roles)) {
+            return false;
+        }
+        return roles.stream().map(Object::toString).anyMatch("ADMIN"::equals);
     }
 }

@@ -7,6 +7,8 @@ import com.backend.Ai_Gateway.exceptions.RessourceAlreadyExistsException;
 import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
 import com.backend.Ai_Gateway.exceptions.UnauthorizedException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -16,11 +18,15 @@ import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.time.Instant;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(RessourceNotFoundException.class)
     public ResponseEntity<ApiErrorResponse> handleNotFound(RessourceNotFoundException ex, HttpServletRequest request) {
@@ -103,6 +109,38 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.NOT_IMPLEMENTED, ex.getMessage(), request);
     }
 
+    /**
+     * Le fournisseur LLM (Ollama/OpenAI/...) a répondu avec un statut d'erreur — ex. 404
+     * "model not found" pour un modèle mal configuré côté app. Sans ce handler, ça tombait
+     * dans {@link #handleGeneric} : "Une erreur interne est survenue", message du provider
+     * perdu (pas même loggé). 502 : c'est le fournisseur en amont qui a échoué, pas ce service.
+     */
+    @ExceptionHandler({RestClientResponseException.class, WebClientResponseException.class})
+    public ResponseEntity<ApiErrorResponse> handleProviderHttpError(Exception ex, HttpServletRequest request) {
+        int status;
+        String body;
+        if (ex instanceof RestClientResponseException e) {
+            status = e.getStatusCode().value();
+            body = e.getResponseBodyAsString();
+        } else {
+            WebClientResponseException e = (WebClientResponseException) ex;
+            status = e.getStatusCode().value();
+            body = e.getResponseBodyAsString();
+        }
+        log.warn("Provider HTTP error: status={} body={}", status, body, ex);
+
+        String detail = body != null && !body.isBlank() ? " : " + truncate(body, 300) : "";
+        return build(
+                HttpStatus.BAD_GATEWAY,
+                "Le fournisseur IA a retourné une erreur (HTTP " + status + ")" + detail,
+                request
+        );
+    }
+
+    private static String truncate(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max) + "…";
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiErrorResponse> handleBadRequest(IllegalArgumentException ex, HttpServletRequest request) {
         return build(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
@@ -110,6 +148,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiErrorResponse> handleGeneric(Exception ex, HttpServletRequest request) {
+        // Avant ce fix : exception avalée sans trace, "Une erreur interne est survenue" était
+        // tout ce qui restait, y compris dans les logs — impossible à débugger après coup.
+        log.error("Unhandled exception on {} {}", request.getMethod(), request.getRequestURI(), ex);
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "Une erreur interne est survenue", request);
     }
 

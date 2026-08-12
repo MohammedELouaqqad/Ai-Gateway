@@ -139,6 +139,12 @@ export const fr = {
       failed: 'Échec de la connexion',
       retry: 'Réessayer',
     },
+    login: {
+      title: 'AI Gateway',
+      desc: 'Connectez-vous ou créez un compte pour continuer.',
+      loginButton: 'Se connecter',
+      registerButton: 'Créer un compte',
+    },
     profile: {
       title: 'Mon profil',
       subtitle: 'Compte et préférences.',
@@ -404,7 +410,8 @@ export const fr = {
       valid: 'Valide',
       expired: 'Expiré',
       viewProfile: 'Voir le profil →',
-      accountConsole: 'Gérer mon compte (mot de passe, nom, email) ↗',
+      accountConsole: 'Gérer mon compte (nom, email) ↗',
+      accountConsolePassword: 'Changer mon mot de passe ↗',
       usersRoles: 'Users & Rôles',
       usersRolesDesc: 'Activer/désactiver un compte local. Les rôles restent gérés uniquement dans Keycloak.',
       usersAdminOnly: 'Réservé aux administrateurs.',

@@ -5,9 +5,11 @@ import com.backend.Ai_Gateway.enums.ProviderType;
 import com.backend.Ai_Gateway.provider.dto.ChatChunk;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
+import com.backend.Ai_Gateway.provider.dto.ProviderModelInfo;
 import com.backend.Ai_Gateway.provider.dto.ollama.OllamaChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ollama.OllamaChatResponse;
 import com.backend.Ai_Gateway.provider.dto.ollama.OllamaStreamChunkDto;
+import com.backend.Ai_Gateway.provider.dto.ollama.OllamaTagsResponse;
 import com.backend.Ai_Gateway.provider.mapper.OllamaChunkMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,10 +19,11 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 
+import java.util.List;
 import java.util.Set;
 
 @Component
-public class OllamaProvider implements LLMProvider {
+public class OllamaProvider implements LLMProvider, ModelListingProvider {
 
     private final RestClient.Builder restClientBuilder;
     private final WebClient.Builder webClientBuilder;
@@ -92,6 +95,29 @@ public class OllamaProvider implements LLMProvider {
         } catch (Exception ex) {
             throw new IllegalStateException("Invalid Ollama stream chunk: " + line, ex);
         }
+    }
+
+    /**
+     * Modèles déjà "pull"és sur ce serveur Ollama ({@code GET /api/tags}) — utilisé par
+     * {@code ModelService.createModel} pour rejeter un tag qui n'existe pas réellement, avant
+     * qu'il échoue en pleine conversation utilisateur.
+     */
+    @Override
+    public List<ProviderModelInfo> models(Provider provider) {
+        String baseUrl = resolveBaseUrl(provider.getBaseUrl(), defaultOllamaBaseUrl);
+        RestClient client = restClientBuilder.baseUrl(baseUrl).build();
+
+        OllamaTagsResponse response = client.get()
+                .uri("/api/tags")
+                .retrieve()
+                .body(OllamaTagsResponse.class);
+
+        if (response == null || response.models() == null) {
+            return List.of();
+        }
+        return response.models().stream()
+                .map(tag -> new ProviderModelInfo(tag.name(), tag.name(), "ollama"))
+                .toList();
     }
 
     private String resolveBaseUrl(String providerBaseUrl, String fallback) {

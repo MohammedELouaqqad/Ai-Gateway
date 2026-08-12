@@ -118,16 +118,28 @@ export function SettingsPage() {
               </Link>
             </p>
             {connected && (
-              <p className="settings-auth__hint">
-                <a
-                  href={accountConsoleUrl()}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="card__link"
-                >
-                  {pages.settings.accountConsole}
-                </a>
-              </p>
+              <>
+                <p className="settings-auth__hint">
+                  <a
+                    href={accountConsoleUrl()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="card__link"
+                  >
+                    {pages.settings.accountConsole}
+                  </a>
+                </p>
+                <p className="settings-auth__hint">
+                  <a
+                    href={accountConsoleUrl('account-security/signing-in')}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="card__link"
+                  >
+                    {pages.settings.accountConsolePassword}
+                  </a>
+                </p>
+              </>
             )}
           </div>
         </section>

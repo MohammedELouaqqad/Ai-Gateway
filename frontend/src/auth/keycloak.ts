@@ -53,10 +53,11 @@ async function sha256Base64Url(value: string): Promise<string> {
 }
 
 /**
- * Redirige vers la page de login Keycloak (Authorization Code + PKCE).
- * Plus de formulaire username/password dans React.
+ * Prépare et lance une redirection Authorization Code + PKCE vers Keycloak, sur
+ * `endpoint` (`auth` pour le login, `registrations` pour l'inscription — même mécanisme,
+ * seul le endpoint hébergé par Keycloak diffère). Plus de formulaire maison dans React.
  */
-export async function beginLogin(postLoginRedirect = '/'): Promise<void> {
+async function beginAuthorizationCodeFlow(endpoint: 'auth' | 'registrations', postLoginRedirect: string): Promise<void> {
   const verifier = randomString(32)
   const state = randomString(16)
   const challenge = await sha256Base64Url(verifier)
@@ -75,7 +76,23 @@ export async function beginLogin(postLoginRedirect = '/'): Promise<void> {
     code_challenge_method: 'S256',
   })
 
-  window.location.assign(`${realmBase()}/auth?${params.toString()}`)
+  window.location.assign(`${realmBase()}/${endpoint}?${params.toString()}`)
+}
+
+/** Redirige vers la page de login Keycloak. */
+export function beginLogin(postLoginRedirect = '/'): Promise<void> {
+  return beginAuthorizationCodeFlow('auth', postLoginRedirect)
+}
+
+/**
+ * Redirige vers la page d'inscription native Keycloak (`/protocol/openid-connect/registrations`
+ * — même flow que le login, juste un endpoint différent, exactement ce que fait `keycloak.register()`
+ * dans keycloak-js). Si `registrationAllowed` est à `false` sur le realm, Keycloak retombe de
+ * lui-même sur l'écran de login — rien à répliquer côté app (vérifié empiriquement).
+ * Retour ensuite identique à un login : `/auth/callback` puis authentifié dans l'app.
+ */
+export function beginRegister(postLoginRedirect = '/'): Promise<void> {
+  return beginAuthorizationCodeFlow('registrations', postLoginRedirect)
 }
 
 /** Déduplique l’échange (React Strict Mode monte 2× le callback en dev). */
@@ -171,9 +188,12 @@ async function exchangeAuthorizationCode(search: string): Promise<string> {
  * URL de l'Account Console Keycloak (self-service) — mot de passe, nom, email, sessions actives.
  * Aucun formulaire à construire côté app : la même session SSO déjà active dans le navigateur
  * (celle qui a produit le JWT) s'applique, pas de re-login.
+ * `section` : chemin vérifié contre le bundle réel de la console (Keycloak 26, thème
+ * `keycloak.v3`) — `"account-security/signing-in"` existe ; les infos personnelles, elles,
+ * sont la page racine (pas de sous-route dédiée dans ce build).
  */
-export function accountConsoleUrl(): string {
-  return `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/account/`
+export function accountConsoleUrl(section?: 'account-security/signing-in'): string {
+  return `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/account/${section ?? ''}`
 }
 
 /** Déconnexion locale + page logout Keycloak. */

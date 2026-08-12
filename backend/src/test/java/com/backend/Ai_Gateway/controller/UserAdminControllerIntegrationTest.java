@@ -66,6 +66,32 @@ class UserAdminControllerIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    /**
+     * The regression this exists to catch: with a real (non-mocked) transactional context,
+     * {@code requireCurrentUser()} used to be {@code @Transactional} — the {@code save()} that
+     * creates a brand-new disabled user got rolled back by the {@code throw} right after it
+     * ("Compte désactivé"), so the row never actually persisted. An ADMIN could never see the
+     * new user in Users to approve them: every retry just repeated the same create-then-discard
+     * cycle. Only a real DB integration test (not Mockito) can catch this — a mock's save()
+     * doesn't participate in transaction rollback.
+     */
+    @Test
+    void firstTimeUser_isPersistedDisabled_evenThoughRequestIsRejected() throws Exception {
+        String sub = "brand-new-it-" + UUID.randomUUID();
+
+        mockMvc.perform(get("/api/profile")
+                        .with(jwt().jwt(j -> j
+                                .subject(sub)
+                                .claim("preferred_username", "brandnew")
+                                .claim("email", "brandnew@ai-gateway.local"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Compte désactivé"));
+
+        User persisted = userRepository.findByKeycloakId(sub).orElse(null);
+        org.assertj.core.api.Assertions.assertThat(persisted).isNotNull();
+        org.assertj.core.api.Assertions.assertThat(persisted.isEnabled()).isFalse();
+    }
+
     private User persistUser(String keycloakId, String username) {
         return userRepository.findByKeycloakId(keycloakId).orElseGet(() -> {
             User user = new User();

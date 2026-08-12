@@ -92,6 +92,7 @@ Sans le fichier `docker-compose.dev.yml`, les images sont **figées** (il faut `
 | Frontend   | http://localhost:5173 |
 | API        | http://localhost:8080 |
 | Keycloak   | http://localhost:8180 (`admin` / `admin`) |
+| Mailpit    | http://localhost:8025 (catcher SMTP local, emails Keycloak — voir "Inscription publique") |
 | Prometheus | http://localhost:9090 |
 | Grafana    | http://localhost:3000 (`admin` / `admin`) |
 | Postgres   | `localhost:5433` |
@@ -258,12 +259,10 @@ Deux bases sur ce serveur (recommandé — ne pas mélanger les schémas Keycloa
 | `keycloak` | Keycloak (user `keycloak` / `keycloak`) |
 
 1. Ouvrir http://localhost:8180 → login `admin` / `admin`.
-2. Créer le realm `Ai-Gateway`, client public `Ai-Gateway-frontend` :
-   - **Standard flow** ON, **Direct access grants** OFF (recommandé)
-   - Valid redirect URIs : `http://localhost:5173/auth/callback`
-   - Valid post logout redirect URIs : `http://localhost:5173/*`
-   - Web origins : `http://localhost:5173`
-3. Créer les rôles realm `USER`, `DEVELOPER`, `ADMIN` et un utilisateur de test.
+2. Le realm `Ai-Gateway` (client public `Ai-Gateway-frontend`, rôles `USER`/`DEVELOPER`/`ADMIN`, registration + verify email + SMTP mailpit + password policy + brute force déjà réglés) est **importé automatiquement** au 1er boot depuis [`docker/keycloak/import/Ai-Gateway-realm.json`](docker/keycloak/import/Ai-Gateway-realm.json) (`--import-realm`, ne s'exécute que sur un volume Postgres vide — un realm déjà présent n'est jamais écrasé). Rien à créer à la main pour la stack Compose ; il ne reste qu'à créer un utilisateur de test.
+   - Sans Docker Compose (Keycloak lancé autrement), reproduire à la main : client public `Ai-Gateway-frontend`, **Standard flow** ON, **Direct access grants** OFF, Valid redirect URIs `http://localhost:5173/auth/callback`, Valid post logout redirect URIs `http://localhost:5173/*`, Web origins `http://localhost:5173`.
+   - Après toute modif du realm via la console admin qu'on veut garder : ré-exporter avec `Realm settings → Action → Partial export` (rôles + clients, **pas** les users) et remplacer le fichier ci-dessus.
+3. Créer les rôles realm `USER`, `DEVELOPER`, `ADMIN` et un utilisateur de test (rôles déjà créés par l'import — reste l'utilisateur de test).
 4. Backend : `iss` JWT = `http://localhost:8180/realms/Ai-Gateway` ; JWKS récupéré en interne via `http://keycloak:8080/.../certs`.
 5. Front : redirect vers **page login Keycloak** (Authorization Code + PKCE) → callback `/auth/callback` → `Authorization: Bearer` sur `/api/**`.
 6. Chaque user Keycloak est synchronisé en BDD (`users.keycloak_id` = claim `sub`).
@@ -285,18 +284,31 @@ Assignez au moins `USER` (ou `ADMIN`) à chaque compte. Sans `ADMIN`, les bouton
 
 Le login est **entièrement délégué** à la page hébergée par Keycloak (Authorization Code + PKCE, pas de formulaire côté React) — activer l'inscription publique est donc un simple toggle dans la console d'admin Keycloak, **pas du code**. Mais côté app, tout nouveau compte vu pour la première fois (auto-inscrit ou créé à la main par un admin dans Keycloak — l'app ne peut pas distinguer les deux) démarre **`enabled=false`** : un ADMIN doit l'activer explicitement dans **Users & Rôles** avant tout accès. Sans ça, une inscription publique ouverte laisserait n'importe qui avec un email consommer du budget LLM sans contrôle.
 
-Checklist realm Keycloak avant d'activer `Realm Settings → Login → User registration` :
+Checklist realm Keycloak avant d'activer `Realm Settings → Login → User registration` — **déjà appliquée** dans le realm importé ([`docker/keycloak/import/Ai-Gateway-realm.json`](docker/keycloak/import/Ai-Gateway-realm.json)) :
 
-| Réglage | Pourquoi |
-|---------|----------|
-| **User registration** ON | Affiche le lien "Register" sur la page de login |
-| **Verify email** ON | Sans ça, n'importe quel email (même pas possédé) suffit pour un compte fonctionnel — Keycloak bloque l'émission du JWT tant que l'email n'est pas confirmé |
-| **SMTP** configuré (`Realm Settings → Email`) | Requis pour que l'email de vérification (et "mot de passe oublié") parte réellement — `start-dev` ne le configure pas par défaut |
-| **Default roles** = `USER` uniquement | À vérifier explicitement — un défaut mal réglé sur `ADMIN` serait catastrophique pour un compte auto-inscrit |
-| **Password policy** (`Authentication → Policies`) | Longueur/complexité minimale — le mot de passe est choisi par un utilisateur non vérifié au moment de l'inscription |
-| **Brute force detection** ON | Standard, protège aussi le formulaire d'inscription |
+| Réglage | État | Pourquoi |
+|---------|------|----------|
+| **User registration** ON | ✅ | Affiche le lien "Register" sur la page de login |
+| **Verify email** ❌ **OFF** (volontairement) | ✅ | Voir "Vérification d'email" ci-dessous — décision produit : vérification manuelle par un ADMIN dans Keycloak, pas d'email automatique |
+| **SMTP** configuré (`Realm Settings → Email`) | ✅ | Sert uniquement à "mot de passe oublié" maintenant (plus à la vérification d'email). En local : **Mailpit** (service Compose, catcher SMTP, jamais de vraie délivrance) — `host=mailpit`, `port=1025`, pas d'auth/TLS ; UI web sur http://localhost:8025. En prod, pointer vers un vrai SMTP. |
+| **Default roles** = `USER` uniquement | ✅ | Un défaut mal réglé sur `ADMIN` serait catastrophique pour un compte auto-inscrit. Sans `USER` dans les rôles par défaut, un compte auto-inscrit — même activé par un ADMIN via `/api/admin/users` — n'a **aucun rôle** dans son JWT (les rôles viennent exclusivement de Keycloak, `UserAdminController` ne fait qu'enable/disable) : tous les endpoints `hasRole(...)` restent 403 sans recours possible depuis l'app. Trouvé et corrigé pendant la mise en place de ce checklist. |
+| **Password policy** (`Authentication → Policies`) | ✅ | `length(10) and notUsername and notEmail and upperCase(1) and lowerCase(1) and digits(1)` — le mot de passe est choisi par un utilisateur non vérifié au moment de l'inscription |
+| **Brute force detection** ON | ✅ | Standard, protège aussi le formulaire d'inscription |
+| **Reset password** ON | ✅ | "Mot de passe oublié" — utilise SMTP/Mailpit |
 
-**Défense en profondeur côté app :** `UserService.requireCurrentUser()` rejette aussi un JWT avec `email_verified: false` explicite — au cas où le realm serait mal configuré malgré la checklist ci-dessus.
+#### Vérification d'email : manuelle, pas automatique
+
+Décision produit (pas la valeur par défaut d'un starter Keycloak) : **`Verify email` est désactivé sur le realm**. Un nouveau compte auto-inscrit reçoit son JWT immédiatement, avec `email_verified: false` dedans — **aucun email n'est envoyé**. C'est `UserService.requireCurrentUser()` qui bloque l'accès :
+
+```java
+if (Boolean.FALSE.equals(jwt.getClaimAsBoolean("email_verified"))) {
+    throw new UnauthorizedException("Email non vérifié");
+}
+```
+
+Ce check existait déjà comme "défense en profondeur" (au cas où le realm serait mal configuré) — il est maintenant le **mécanisme principal**, pas un filet de sécurité. Pour débloquer un utilisateur : un **ADMIN ouvre la console Keycloak** (`Users → <utilisateur> → Details`) et coche **Email Verified** à la main. Au prochain login, le nouveau JWT porte `email_verified: true` et ce check passe.
+
+Ce reste **indépendant** de l'approbation applicative (`users.enabled`, voir ci-dessus) — un ADMIN doit faire les deux : cocher Email Verified dans Keycloak, **et** cliquer Activer dans Settings → Users & Rôles. Aucune des deux étapes ne remplace l'autre.
 
 **Changer son mot de passe / nom / email :** entièrement délégué à l'**Account Console** Keycloak (self-service, même session SSO déjà active — pas de re-login) — lien dans **Settings** (`Auth Keycloak → Gérer mon compte`). Aucun formulaire de ce type côté app, volontairement : la sécurité (hash, politique de mot de passe, historique) reste 100 % du ressort de l'IdP.
 

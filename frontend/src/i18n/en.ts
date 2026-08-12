@@ -141,6 +141,12 @@ export const en: Dictionary = {
       failed: 'Sign-in failed',
       retry: 'Try again',
     },
+    login: {
+      title: 'AI Gateway',
+      desc: 'Sign in or create an account to continue.',
+      loginButton: 'Sign in',
+      registerButton: 'Create an account',
+    },
     profile: {
       title: 'My profile',
       subtitle: 'Account and preferences.',
@@ -406,7 +412,8 @@ export const en: Dictionary = {
       valid: 'Valid',
       expired: 'Expired',
       viewProfile: 'View profile →',
-      accountConsole: 'Manage my account (password, name, email) ↗',
+      accountConsole: 'Manage my account (name, email) ↗',
+      accountConsolePassword: 'Change my password ↗',
       usersRoles: 'Users & Roles',
       usersRolesDesc: 'Enable/disable a local account. Roles stay managed exclusively in Keycloak.',
       usersAdminOnly: 'Admins only.',

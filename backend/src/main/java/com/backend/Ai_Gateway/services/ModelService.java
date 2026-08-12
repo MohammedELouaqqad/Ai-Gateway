@@ -2,14 +2,21 @@ package com.backend.Ai_Gateway.services;
 
 
 import com.backend.Ai_Gateway.entity.Model;
+import com.backend.Ai_Gateway.entity.Provider;
 import com.backend.Ai_Gateway.exceptions.RessourceAlreadyExistsException;
 import com.backend.Ai_Gateway.exceptions.RessourceNotFoundException;
+import com.backend.Ai_Gateway.provider.LLMProvider;
+import com.backend.Ai_Gateway.provider.ModelListingProvider;
+import com.backend.Ai_Gateway.provider.ProviderRegistry;
+import com.backend.Ai_Gateway.provider.dto.ProviderModelInfo;
 import com.backend.Ai_Gateway.repositories.ConversationRepository;
 import com.backend.Ai_Gateway.repositories.ModelRepository;
 import com.backend.Ai_Gateway.repositories.ProviderRepository;
 import com.backend.Ai_Gateway.repositories.UsageLogRepository;
 import com.backend.Ai_Gateway.services.dto.CreateModelRequest;
 import com.backend.Ai_Gateway.services.dto.UpdateModelRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,21 +27,26 @@ import java.util.Optional;
 @Service
 public class ModelService {
 
+    private static final Logger log = LoggerFactory.getLogger(ModelService.class);
+
     private final ModelRepository modelRepository;
     private final ProviderRepository providerRepository;
     private final ConversationRepository conversationRepository;
     private final UsageLogRepository usageLogRepository;
+    private final ProviderRegistry providerRegistry;
 
     public ModelService(
             ModelRepository modelRepository,
             ProviderRepository providerRepository,
             ConversationRepository conversationRepository,
-            UsageLogRepository usageLogRepository
+            UsageLogRepository usageLogRepository,
+            ProviderRegistry providerRegistry
     ) {
         this.modelRepository = modelRepository;
         this.providerRepository = providerRepository;
         this.conversationRepository = conversationRepository;
         this.usageLogRepository = usageLogRepository;
+        this.providerRegistry = providerRegistry;
     }
 
     public List<Model> getAllModels() {
@@ -84,6 +96,8 @@ public class ModelService {
         var provider = providerRepository.findById(request.providerId())
                 .orElseThrow(() -> new RessourceNotFoundException("Provider not found with id " + request.providerId()));
 
+        assertModelExistsOnProvider(provider, request.name().trim());
+
         if (request.isDefault()) {
             clearDefaultModel();
         }
@@ -98,6 +112,45 @@ public class ModelService {
         return modelRepository.save(model);
     }
 
+    /**
+     * Refuse un {@code name} qui n'existe pas réellement chez le provider — évite de créer un
+     * modèle qui échouera seulement au premier chat utilisateur (erreur 404 Ollama non
+     * catégorisée jusqu'ici, voir GlobalExceptionHandler).
+     * <p>
+     * Best-effort, jamais bloquant pour une raison qui n'est pas "le nom est faux" :
+     * <ul>
+     *   <li>Provider dont l'adaptateur n'implémente pas {@link ModelListingProvider}
+     *       (OpenAI/Azure/vLLM/SGLang à ce jour) — aucune vérification possible, on laisse
+     *       passer comme avant.</li>
+     *   <li>Provider listable mais injoignable au moment de la création (ex. Ollama down) —
+     *       on ne bloque pas la création pour une panne transitoire sans rapport avec le nom
+     *       saisi ; le check de robustesse au chat (GlobalExceptionHandler) reste le filet.</li>
+     * </ul>
+     */
+    private void assertModelExistsOnProvider(Provider provider, String modelName) {
+        LLMProvider adapter = providerRegistry.get(provider.getType());
+        if (!(adapter instanceof ModelListingProvider listing)) {
+            return;
+        }
+        List<ProviderModelInfo> available;
+        try {
+            available = listing.models(provider);
+        } catch (RuntimeException ex) {
+            log.warn("Skipping model-existence check — provider '{}' unreachable: {}",
+                    provider.getName(), ex.getMessage());
+            return;
+        }
+        boolean exists = available.stream().anyMatch(m -> modelName.equals(m.name()));
+        if (!exists) {
+            String sample = available.stream().map(ProviderModelInfo::name).limit(5)
+                    .reduce((a, b) -> a + ", " + b).orElse("aucun modèle disponible");
+            throw new IllegalArgumentException(
+                    "Modèle « " + modelName + " » introuvable chez « " + provider.getName()
+                            + " ». Modèles disponibles : " + sample
+            );
+        }
+    }
+
     @Transactional
     public Model updateModel(Long id, UpdateModelRequest request) {
         Model model = getById(id);
@@ -108,6 +161,12 @@ public class ModelService {
                 .ifPresent(existing -> {
                     throw new RessourceAlreadyExistsException("Model already exists: " + newName);
                 });
+
+        // Renommer vers un tag qui n'existe pas chez le provider est le même trou que la
+        // création sans check — même garde-fou, même raisonnement (voir createModel).
+        if (!newName.equals(model.getName())) {
+            assertModelExistsOnProvider(model.getProvider(), newName);
+        }
 
         model.setDisplayName(request.displayName().trim());
         model.setName(newName);
