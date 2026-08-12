@@ -5,9 +5,11 @@ import com.backend.Ai_Gateway.provider.dto.ChatChunk;
 import com.backend.Ai_Gateway.provider.dto.ChatMessage;
 import com.backend.Ai_Gateway.provider.dto.ChatRequest;
 import com.backend.Ai_Gateway.provider.dto.ChatResponse;
+import com.backend.Ai_Gateway.provider.dto.ProviderModelInfo;
 import com.backend.Ai_Gateway.provider.dto.openai.OpenAIChatRequest;
 import com.backend.Ai_Gateway.provider.dto.openai.OpenAIChatResponse;
 import com.backend.Ai_Gateway.provider.dto.openai.OpenAIMessage;
+import com.backend.Ai_Gateway.provider.dto.openai.OpenAIModelsResponse;
 import com.backend.Ai_Gateway.provider.dto.openai.OpenAIStreamChatRequest;
 import com.backend.Ai_Gateway.provider.dto.openai.OpenAiStreamChunkDto;
 import com.backend.Ai_Gateway.provider.mapper.OpenAiChunkMapper;
@@ -120,6 +122,36 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
                 .filter(chunk -> chunk.done() || (chunk.content() != null && !chunk.content().isEmpty()));
     }
 
+    /**
+     * {@code GET /models} — forme standard OpenAI, partagée telle quelle par vLLM/SGLang (même
+     * shape de réponse que leur {@code /chat/completions}). Azure OpenAI n'a pas cet endpoint
+     * dans la même forme (liste par déploiement, API Resource Manager distincte) — laissé de
+     * côté délibérément, n'implémente pas {@link ModelListingProvider}, voir sa Javadoc.
+     * <p>
+     * Protégé, pas exposé directement : chaque famille qui veut l'offrir déclare elle-même
+     * {@code implements ModelListingProvider} et délègue ici — permet à Azure de ne pas
+     * hériter d'une capacité qu'elle ne supporte pas juste parce qu'elle étend cette classe.
+     */
+    protected List<ProviderModelInfo> listModelsOpenAiStyle(Provider provider) {
+        String baseUrl = resolveBaseUrl(provider.getBaseUrl(), this::defaultBaseUrl);
+        RestClient client = restClientBuilder.clone()
+                .baseUrl(baseUrl)
+                .defaultHeaders(headers -> applyAuth(provider, headers))
+                .build();
+
+        OpenAIModelsResponse response = client.get()
+                .uri("/models")
+                .retrieve()
+                .body(OpenAIModelsResponse.class);
+
+        if (response == null || response.data() == null) {
+            return List.of();
+        }
+        return response.data().stream()
+                .map(m -> new ProviderModelInfo(m.id(), m.id(), m.ownedBy()))
+                .toList();
+    }
+
     /** Only called when {@code Provider.baseUrl} is unset — may throw if this family has no sane default. */
     protected abstract String defaultBaseUrl();
 
@@ -151,6 +183,18 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
      */
     protected Map<String, String> queryParams(Provider provider, ChatRequest request) {
         return Map.of();
+    }
+
+    /**
+     * Suffixe auto-complété sur un {@code Provider.baseUrl} personnalisé s'il n'y est pas déjà
+     * — évite le piège "j'ai tapé {@code http://host:port} sans {@code /v1}, tout échoue en
+     * 404 silencieux" (SSRF/typo humain fréquent, vu en usage réel). {@code "/v1"} pour toute
+     * la famille OpenAI-compatible... sauf Azure, qui ne l'utilise jamais (chemin
+     * {@code /openai/deployments/{deployment}/...}) — {@link AzureOpenAIProvider} override à
+     * {@code ""} pour ne pas en hériter juste parce qu'il étend cette classe.
+     */
+    protected String baseUrlVersionSuffix() {
+        return "/v1";
     }
 
     private URI buildChatUri(UriBuilder uriBuilder, Provider provider, ChatRequest request) {
@@ -193,10 +237,16 @@ public abstract class OpenAiCompatibleProvider implements LLMProvider {
      * {@code fallback} is a {@link Supplier}, not a plain value: some family members
      * (e.g. Azure) have no sane default and throw from {@link #defaultBaseUrl()} — it must
      * only be evaluated when {@code Provider.baseUrl} is actually missing.
+     * <p>
+     * Un {@code baseUrl} personnalisé se voit compléter par {@link #baseUrlVersionSuffix()}
+     * s'il ne se termine pas déjà par lui — {@code defaultBaseUrl()}, lui, n'est jamais touché
+     * (déjà écrit avec le bon suffixe littéralement dans chaque implémentation).
      */
     private String resolveBaseUrl(String providerBaseUrl, Supplier<String> fallback) {
         if (providerBaseUrl != null && !providerBaseUrl.isBlank()) {
-            return providerBaseUrl.trim().replaceAll("/$", "");
+            String trimmed = providerBaseUrl.trim().replaceAll("/$", "");
+            String suffix = baseUrlVersionSuffix();
+            return (suffix.isEmpty() || trimmed.endsWith(suffix)) ? trimmed : trimmed + suffix;
         }
         return fallback.get();
     }

@@ -79,4 +79,10 @@ public class AzureOpenAIProvider extends OpenAiCompatibleProvider {
     protected Map<String, String> queryParams(Provider provider, ChatRequest request) {
         return Map.of("api-version", API_VERSION);
     }
+
+    /** Azure n'utilise jamais {@code /v1} (chemin {@code /openai/deployments/...}) — voir la classe parente. */
+    @Override
+    protected String baseUrlVersionSuffix() {
+        return "";
+    }
 }

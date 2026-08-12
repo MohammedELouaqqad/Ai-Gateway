@@ -2,12 +2,14 @@ package com.backend.Ai_Gateway.provider;
 
 import com.backend.Ai_Gateway.entity.Provider;
 import com.backend.Ai_Gateway.enums.ProviderType;
+import com.backend.Ai_Gateway.provider.dto.ProviderModelInfo;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -17,7 +19,7 @@ import java.util.Set;
  * {@link VllmProvider}: self-hosted, commonly no API key at all.
  */
 @Component
-public class SglangProvider extends OpenAiCompatibleProvider {
+public class SglangProvider extends OpenAiCompatibleProvider implements ModelListingProvider {
 
     public SglangProvider(
             RestClient.Builder restClientBuilder,
@@ -48,5 +50,10 @@ public class SglangProvider extends OpenAiCompatibleProvider {
         if (key != null && !key.isBlank()) {
             headers.setBearerAuth(key.trim());
         }
+    }
+
+    @Override
+    public List<ProviderModelInfo> models(Provider provider) {
+        return listModelsOpenAiStyle(provider);
     }
 }

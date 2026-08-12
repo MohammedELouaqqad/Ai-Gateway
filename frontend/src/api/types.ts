@@ -48,11 +48,13 @@ export interface CreateModelRequest {
 export interface UpdateModelRequest {
   displayName: string
   name: string
+  providerId: number
 }
 
 export interface UpdateProviderRequest {
   name: string
   baseUrl?: string
+  location?: ProviderLocation
   priority?: number
   /** Omit/blank = leave the stored key untouched (never clears it — see backend for why). */
   apiKey?: string

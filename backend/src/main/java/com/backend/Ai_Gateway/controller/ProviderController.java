@@ -96,6 +96,7 @@ public class ProviderController {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("name", provider.getName());
         fields.put("baseUrl", provider.getBaseUrl() != null ? provider.getBaseUrl() : "null");
+        fields.put("location", provider.getLocation() != null ? provider.getLocation() : "null");
         fields.put("priority", provider.getPriority() != null ? provider.getPriority() : "null");
         return fields;
     }

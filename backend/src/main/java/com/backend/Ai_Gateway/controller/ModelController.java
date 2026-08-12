@@ -92,6 +92,7 @@ public class ModelController {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("displayName", model.getDisplayName());
         fields.put("name", model.getName());
+        fields.put("providerId", model.getProvider() != null ? model.getProvider().getId() : "null");
         return fields;
     }
 }

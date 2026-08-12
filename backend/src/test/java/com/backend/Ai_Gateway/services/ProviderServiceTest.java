@@ -76,7 +76,7 @@ class ProviderServiceTest {
         when(providerRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(providerRepository.findByName("Azure Prod")).thenReturn(Optional.of(existing));
 
-        UpdateProviderRequest request = new UpdateProviderRequest("Azure Prod", null, 2, "");
+        UpdateProviderRequest request = new UpdateProviderRequest("Azure Prod", null, null, 2, "");
 
         Provider updated = service.updateProvider(1L, request);
 
@@ -90,7 +90,7 @@ class ProviderServiceTest {
         when(providerRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(providerRepository.findByName("Azure Prod")).thenReturn(Optional.of(existing));
 
-        UpdateProviderRequest request = new UpdateProviderRequest("Azure Prod", null, null, null);
+        UpdateProviderRequest request = new UpdateProviderRequest("Azure Prod", null, null, null, null);
 
         Provider updated = service.updateProvider(1L, request);
 
@@ -103,7 +103,7 @@ class ProviderServiceTest {
         when(providerRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(providerRepository.findByName("Azure Prod")).thenReturn(Optional.of(existing));
 
-        UpdateProviderRequest request = new UpdateProviderRequest("Azure Prod", null, null, "new-secret");
+        UpdateProviderRequest request = new UpdateProviderRequest("Azure Prod", null, null, null, "new-secret");
 
         Provider updated = service.updateProvider(1L, request);
 

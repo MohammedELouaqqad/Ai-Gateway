@@ -899,6 +899,26 @@ textarea:focus-visible {
   background: rgba(255, 255, 255, 0.02);
 }
 
+.data-table__row--editing {
+  background: var(--info-bg);
+}
+
+.data-table__row--editing:hover {
+  background: var(--info-bg);
+}
+
+/*
+ * Deux champs empilés dans une même cellule éditable (ex: displayName + name,
+ * name + baseUrl). Nécessaire : <input>/<select> sont inline-block par défaut, un simple
+ * margin-top entre deux d'entre eux ne force pas de retour à la ligne — ils peuvent se
+ * chevaucher avec le contenu de la cellule voisine (bug réel, vu en usage).
+ */
+.data-table__field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
 .data-table__sort {
   display: inline-flex;
   align-items: center;

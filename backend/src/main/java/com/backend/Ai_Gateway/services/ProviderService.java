@@ -83,6 +83,9 @@ public class ProviderService {
         if (request.baseUrl() != null) {
             provider.setBaseUrl(request.baseUrl().trim());
         }
+        if (request.location() != null) {
+            provider.setLocation(request.location());
+        }
         if (request.priority() != null) {
             provider.setPriority(request.priority());
         }

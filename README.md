@@ -26,50 +26,99 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React), compatible *
 
 **Règle streaming :** ajouter un modèle sous un provider existant (Ollama/OpenAI/Azure/vLLM/SGLang) streame automatiquement. Un **nouveau type de provider** au-delà de ces 5 exige un adaptateur développeur (sous-classe de `OpenAiCompatibleProvider` si le protocole est OpenAI-compatible).
 
-**Providers OpenAI-compatibles :** `OpenAIProvider`, `AzureOpenAIProvider`, `VllmProvider`, `SglangProvider` partagent tous `OpenAiCompatibleProvider` — chaque famille expose ses propres hooks (`applyAuth`, `defaultBaseUrl`, `resolveApiKey`, et pour Azure `chatPath`/`queryParams`). vLLM/SGLang parlent le même format OpenAI standard (`/chat/completions`), auth optionnelle (Bearer si `Provider.apiKey` renseigné, sinon aucun header — cas courant d'un serveur auto-hébergé sans clé), défauts `http://localhost:8000/v1` / `http://localhost:30000/v1`. Azure a un chemin d'URL différent (`/openai/deployments/{déploiement}/chat/completions?api-version=...`) — le **nom de déploiement Azure = `Model.name`** dans ce gateway, pas un champ séparé. `api-version` est **fixée en dur à `2024-06-01`** (constante `AzureOpenAIProvider.API_VERSION`) — choix assumé, pas un oubli : Azure retire ses versions selon un calendrier, donc à bumper (ou externaliser en config) si un déploiement en a besoin d'une autre.
+**Providers OpenAI-compatibles :** `OpenAIProvider`, `AzureOpenAIProvider`, `VllmProvider`, `SglangProvider` partagent tous `OpenAiCompatibleProvider` — chaque famille expose ses propres hooks (`applyAuth`, `defaultBaseUrl`, `resolveApiKey`, et pour Azure `chatPath`/`queryParams`). vLLM/SGLang parlent le même format OpenAI standard (`/chat/completions`), auth optionnelle (Bearer si `Provider.apiKey` renseigné, sinon aucun header — cas courant d'un serveur auto-hébergé sans clé), défauts `http://localhost:8000/v1` / `http://localhost:30000/v1`. Un `baseUrl` personnalisé (tapé par l'admin) se voit auto-compléter `/v1` s'il n'y est pas déjà (`OpenAiCompatibleProvider.baseUrlVersionSuffix()`) — évite l'erreur silencieuse "j'ai oublié `/v1`". Azure a un chemin d'URL différent (`/openai/deployments/{déploiement}/chat/completions?api-version=...`, jamais de `/v1`) — le **nom de déploiement Azure = `Model.name`** dans ce gateway, pas un champ séparé. `api-version` est **fixée en dur à `2024-06-01`** (constante `AzureOpenAIProvider.API_VERSION`) — choix assumé, pas un oubli : Azure retire ses versions selon un calendrier, donc à bumper (ou externaliser en config) si un déploiement en a besoin d'une autre.
+
+**Validation du nom de modèle à la création/renommage :** pour Ollama/OpenAI/vLLM/SGLang, le `name` saisi est vérifié contre le catalogue réel du provider (`GET /api/tags` ou `GET /models`) avant d'être sauvegardé — refus clair si le modèle n'existe pas, plutôt qu'un échec silencieux au premier chat utilisateur. Best-effort : si le provider est injoignable au moment du check (panne transitoire), la création n'est pas bloquée pour autant — seul un nom réellement incorrect est refusé. Azure exclu (pas d'endpoint de listing dans la même forme).
 
 **Modèle local par défaut (seed) :** `llama3.2:1b` (Ollama). Le seed active Ollama + ce modèle comme défaut.
 
-## Prérequis
+## Installation complète, pas à pas (Docker — voie recommandée)
 
-- Java 17, Maven
-- PostgreSQL
-- Node.js 18+ (si front natif)
-- [Ollama](https://ollama.com) avec `llama3.2:1b` (`ollama pull llama3.2:1b`)
-- Optionnel : `OPENAI_API_KEY` pour GPT
+Guide pour quelqu'un qui clone ce repo pour la première fois, sans rien connaître du projet — de zéro à un chat fonctionnel. Chaque étape a été vérifiée manuellement de bout en bout (realm import, bootstrap admin inclus).
 
-## Démarrage rapide (natif)
+### Prérequis
+
+- Docker + Docker Compose
+- [Ollama](https://ollama.com) installé et lancé **sur la machine hôte** (pas dans Docker — le gateway l'appelle via `host.docker.internal`)
+
+### Étape 1 — Cloner et configurer les secrets
 
 ```bash
-# 1. Base
-createdb Ai_Gateway_DB
-# ou Docker (nécessite un .env racine rempli — cp .env.example .env puis éditer, voir section Docker plus bas) :
-# docker compose up database
-
-# 2. Backend (:8080)
-cd backend
-cp .env.example .env     # renseigner OPENAI_API_KEY si besoin
-./mvnw spring-boot:run
-
-# 3. Frontend (:5173)
-cd frontend
-npm install
-npm run dev
+git clone <url-du-repo>
+cd Ai-Gateway
+cp .env.example .env
 ```
 
-Ouvrir http://localhost:5173
-
-## Docker (stack complète)
+Le fichier `.env.example` est **volontairement vide** — `docker compose` refuse de démarrer tant qu'une seule ligne de `.env` n'a pas de valeur (fail-closed, pas de repli sur des mots de passe faibles). Ouvrir `.env` et remplir chaque ligne :
 
 ```bash
-# 1. Requis avant tout démarrage — docker compose refuse de démarrer sans ce fichier
-#    ET sans valeurs non-vides dedans (voir "⚠️ Identifiants" plus bas)
-cp .env.example .env
-# ... puis éditer .env et renseigner un mot de passe pour chaque variable
+POSTGRES_HOST=<nom du service Postgres — doit matcher le nom du service "database" dans docker-compose.yml>
+POSTGRES_USER=<utilisateur Postgres à créer>
+POSTGRES_DB=<nom de la base applicative à créer>
+POSTGRES_PASSWORD=<choisir un mot de passe>
+KEYCLOAK_DB_PASSWORD=<choisir un mot de passe>
+KEYCLOAK_ADMIN=<nom d'utilisateur admin Keycloak>
+KEYCLOAK_ADMIN_PASSWORD=<choisir un mot de passe>
+GRAFANA_ADMIN_USER=<nom d'utilisateur admin Grafana>
+GRAFANA_ADMIN_PASSWORD=<choisir un mot de passe>
+REDIS_PASSWORD=<choisir un mot de passe>
+```
 
-# 2. Ollama doit tourner sur l’hôte (Keycloak est dans Compose)
+`POSTGRES_HOST` n'est pas un choix libre comme les autres : il doit correspondre exactement au nom du service Postgres déclaré dans `docker-compose.yml` (`database` par défaut dans ce repo) — le changer sans renommer aussi ce service casse la résolution DNS interne à Docker. Pour générer des mots de passe rapidement : `openssl rand -base64 18` (à relancer pour chaque ligne).
+
+### Étape 2 — Le modèle LLM local
+
+```bash
+ollama pull llama3.2:1b
+```
+
+Le seed active automatiquement Ollama + ce modèle comme défaut en base — rien d'autre à configurer pour un premier chat.
+
+### Étape 3 — Lancer toute la stack
+
+```bash
 docker compose --profile stack up --build -d
 ```
+
+Premier démarrage : compter **2–3 minutes** (build des images + Keycloak, lent à démarrer). Suivre la progression :
+
+```bash
+docker compose --profile stack logs -f backend keycloak
+```
+
+Vérifier que tout est sain :
+
+```bash
+docker compose --profile stack ps
+```
+
+(`database`, `redis`, `keycloak`, `mailpit` doivent afficher `healthy`.)
+
+### Étape 4 — Créer le tout premier compte ADMIN
+
+Le realm Keycloak (client, rôles, inscription publique, politique de mot de passe...) est **déjà configuré automatiquement** à l'import (voir section Keycloak plus bas) — il ne reste que le compte humain à créer. Passer par la console Keycloak directement (pas par "Créer un compte" sur l'app) évite toute manip supplémentaire ensuite :
+
+1. Ouvrir http://localhost:8180 → se connecter avec `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` (ceux de `.env`)
+2. Sélecteur de realm (coin haut gauche) → basculer de **master** vers **Ai-Gateway**
+3. **Users → Add user** — username/email au choix, **cocher "Email verified"** directement ici, puis Create
+4. Onglet **Credentials** → Set password → **décocher "Temporary"** → Save
+5. Onglet **Role mapping** → Assign role → cocher **ADMIN** → Assign
+
+### Étape 5 — Se connecter
+
+Ouvrir http://localhost:5173 → Se connecter → les identifiants de l'étape 4.
+
+Comme ce compte a déjà le rôle `ADMIN` **et** `Email verified: ON` au moment où l'app le voit pour la première fois, il est **automatiquement activé** — aucune approbation manuelle nécessaire. C'est le seul cas où cette étape est sautée : tout compte créé *après* (auto-inscrit ou promu plus tard) suit le circuit normal — voir "Inscription publique" plus bas.
+
+### Étape 6 — Premier chat
+
+Rien à configurer : le modèle `llama3.2:1b` est déjà actif par défaut. Écrire un message dans le chat.
+
+### Et ensuite ?
+
+- **Inviter d'autres utilisateurs** : ils cliquent "Créer un compte" sur l'écran de login (self-service Keycloak). Ils démarrent désactivés — toi (ADMIN) dois : (1) Keycloak → leur compte → cocher *Email Verified*, (2) Settings → Users & Rôles → *Activer*. Détail complet et pourquoi : section "Inscription publique" plus bas.
+- **Ajouter un provider cloud** (OpenAI, Azure...) : page Fournisseurs → Ajouter — voir "Providers OpenAI-compatibles" plus haut.
+- **Coder sans rebuild à chaque changement** : voir "Mode DEV" juste en dessous.
 
 ### Mode DEV — live reload (recommandé pour coder)
 
@@ -91,10 +140,10 @@ Sans le fichier `docker-compose.dev.yml`, les images sont **figées** (il faut `
 |------------|-----|
 | Frontend   | http://localhost:5173 |
 | API        | http://localhost:8080 |
-| Keycloak   | http://localhost:8180 (`admin` / `admin`) |
+| Keycloak   | http://localhost:8180 (`KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` de `.env`) |
 | Mailpit    | http://localhost:8025 (catcher SMTP local, emails Keycloak — voir "Inscription publique") |
 | Prometheus | http://localhost:9090 |
-| Grafana    | http://localhost:3000 (`admin` / `admin`) |
+| Grafana    | http://localhost:3000 (`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` de `.env`) |
 | Postgres   | `localhost:5433` |
 
 Prod-like (seed off, logs quiet) :
@@ -105,17 +154,46 @@ SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stac
 
 **Note prod réelle :** Compose convient pour un serveur unique / démo. Pour une prod HA, préférer Kubernetes ou un IdP managé ; Keycloak tourne déjà sur Postgres (`base keycloak`, même instance que l’app) — en prod utiliser `start` (pas `start-dev`) + HA.
 
-**⚠️ Identifiants :** `docker compose` refuse de démarrer sans `.env` **ET** sans valeur non-vide pour chaque mot de passe (fail-closed — plus de repli silencieux sur `admin/admin`, et `.env.example` ne fournit délibérément aucune valeur toute prête pour ces champs, pour qu'un simple `cp` sans lecture ne puisse jamais aboutir à un déploiement avec des mots de passe faibles). Copier [.env.example](.env.example) vers `.env` (racine, gitignored, lu automatiquement par `docker compose`), l'éditer, et y mettre de **vraies valeurs** — y compris pour un usage purement local (Postgres, Redis, Keycloak et Grafana ont tous leur port publié par défaut, donc atteignables dès que le firewall de la machine ne bloque pas).
+**⚠️ Identifiants :** `docker compose` refuse de démarrer sans `.env` **ET** sans valeur non-vide pour chaque mot de passe (fail-closed — voir Étape 1 du guide ci-dessus). Vrai même pour un usage purement local : Postgres, Redis, Keycloak et Grafana ont tous leur port publié par défaut, donc atteignables dès que le firewall de la machine ne bloque pas.
 
-## Premier test
+## Checklist après le premier démarrage
 
-1. **Ollama** → `ollama pull llama3.2:1b` (le seed peut déjà activer le modèle en BDD)
-2. **Chat** → envoyer un message (texte progressif en stream)
-3. **Dashboard** → vérifier requêtes / taux d’erreur / tokens sur le scope **24h**
-4. **Consommation** → journal, filtres, export CSV
-5. **Modèles prompts** → créer un template avec `{{content}}`, l’appliquer dans le chat
-6. **ADMIN** → Observability + Santé système (`/admin/health`)
-7. **Clé API** → Settings → générer une clé, tester `curl .../v1/models -H "Authorization: Bearer sk-..."` (voir section `/v1/*` plus bas)
+Une fois le guide ci-dessus terminé (chat qui répond) :
+
+1. **Dashboard** → vérifier requêtes / taux d’erreur / tokens sur le scope **24h**
+2. **Consommation** → journal, filtres, export CSV
+3. **Modèles prompts** → créer un template avec `{{content}}`, l’appliquer dans le chat
+4. **ADMIN** → Observability + Santé système (`/admin/health`)
+5. **Clé API** → Settings → générer une clé, tester `curl .../v1/models -H "Authorization: Bearer sk-..."` (voir section `/v1/*` plus bas)
+
+## Démarrage natif (avancé, sans Docker)
+
+Pour quelqu'un qui a déjà PostgreSQL et Keycloak qui tournent par un autre moyen (pas géré par ce guide — reproduire manuellement la config de la section Keycloak plus bas). Pas la voie recommandée pour un premier essai : préférer le guide Docker ci-dessus, qui configure tout automatiquement.
+
+### Prérequis
+
+- Java 17, Maven
+- PostgreSQL
+- Node.js 18+
+- [Ollama](https://ollama.com) avec `llama3.2:1b` (`ollama pull llama3.2:1b`)
+- Optionnel : `OPENAI_API_KEY` pour GPT
+
+```bash
+# 1. Base
+createdb Ai_Gateway_DB
+
+# 2. Backend (:8080) — Keycloak doit déjà tourner et être accessible à KEYCLOAK_ISSUER_URI
+cd backend
+cp .env.example .env     # renseigner OPENAI_API_KEY si besoin
+./mvnw spring-boot:run
+
+# 3. Frontend (:5173)
+cd frontend
+npm install
+npm run dev
+```
+
+Ouvrir http://localhost:5173
 
 ## Pages monitoring (UI)
 
@@ -201,12 +279,12 @@ Test : `scripts/test-guardrails.sh`.
 
 #### Redis (opt-in) — RPM / RPD / budget partagés
 
-- Compose : service `redis:7-alpine`, `noeviction`, password requis via `.env` racine (`REDIS_PASSWORD`, fail-closed — voir section Docker plus haut)  
-- Activation stack : `APP_REDIS_ENABLED=true` (déjà dans Compose backend)  
-- Local sans Redis : `APP_REDIS_ENABLED=false` → stores **in-memory** (comportement historique)  
-- Scripts Lua : `backend/src/main/resources/redis/*.lua`  
-- **D1** budget block ≠ consommer RPM/RPD · **D2** RPD = tentative acceptée · **D3** pas d’idempotence requestId en v1  
-- Redis down : RPM/RPD `fail-open` configurable (défaut **false** → 429) ; budget → fallback `SUM` Postgres  
+- Compose : service `redis:7-alpine`, `noeviction`, password requis via `.env` racine (`REDIS_PASSWORD`, fail-closed — voir guide d'installation plus haut)
+- Activation stack : `APP_REDIS_ENABLED=true` (déjà dans Compose backend)
+- Local sans Redis : `APP_REDIS_ENABLED=false` → stores **in-memory** (comportement historique)
+- Scripts Lua : `backend/src/main/resources/redis/*.lua`
+- **D1** budget block ≠ consommer RPM/RPD · **D2** RPD = tentative acceptée · **D3** pas d’idempotence requestId en v1
+- Redis down : RPM/RPD `fail-open` configurable (défaut **false** → 429) ; budget → fallback `SUM` Postgres
 - Job réconciliation budget global toutes les ~5 min (orphelins après crash pod)
 
 ### Exemple stream
@@ -221,16 +299,18 @@ curl -N -X POST http://localhost:8080/api/chat/stream \
 ## Variables d'environnement
 
 ```bash
-DB_URL=jdbc:postgresql://localhost:5432/Ai_Gateway_DB
-DB_USERNAME=postgres
-DB_PASSWORD=postgres
-OLLAMA_BASE_URL=http://localhost:11434
-OPENAI_API_KEY=sk-...
-KEYCLOAK_ISSUER_URI=http://localhost:8180/realms/Ai-Gateway
-APP_CORS_ALLOWED_ORIGINS=http://localhost:5173
+DB_URL=<URL JDBC Postgres — jdbc:postgresql://host:port/nom-de-base>
+DB_USERNAME=<utilisateur Postgres>
+DB_PASSWORD=<mot de passe Postgres — jamais de valeur toute prête ici>
+OLLAMA_BASE_URL=<URL du serveur Ollama>
+OPENAI_API_KEY=<clé OpenAI — sk-..., optionnel>
+KEYCLOAK_ISSUER_URI=<URL publique du realm Keycloak — doit matcher le claim "iss" du JWT>
+APP_CORS_ALLOWED_ORIGINS=<origine autorisée pour le frontend>
 APP_SEED_ENABLED=true
 SPRING_PROFILES_ACTIVE=dev   # ou prod
 ```
+
+Ces valeurs dépendent entièrement de comment/où Postgres, Ollama et Keycloak tournent chez vous — aucune n'est universelle. Pour la stack Docker de ce repo (voir guide plus haut) les valeurs correspondantes sont déjà câblées automatiquement dans `docker-compose.yml`, rien à reporter ici ; ce bloc concerne uniquement un backend lancé nativement (`./mvnw spring-boot:run`), où c'est vous qui indiquez où se trouve chaque service.
 
 Ne jamais committer `backend/.env`.
 
@@ -240,8 +320,8 @@ Ne jamais committer `backend/.env`.
 docker compose up -d prometheus grafana
 ```
 
-- Prometheus : http://localhost:9090  
-- Grafana : http://localhost:3000 (`admin` / `admin`)  
+- Prometheus : http://localhost:9090
+- Grafana : http://localhost:3000 (`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` de `.env`)
 - Détails : [monitoring/README.md](monitoring/README.md)
 
 **Actuator sur port séparé :** `/actuator/*` (dont `/actuator/prometheus`, sans auth applicative) écoute sur `management.server.port` (8081 par défaut), **jamais publié à l'hôte** dans `docker-compose.yml` — seul le réseau Docker interne (Prometheus) l'atteint. Le port API (8080, publié) ne sert aucune route actuator.
@@ -256,17 +336,16 @@ Deux bases sur ce serveur (recommandé — ne pas mélanger les schémas Keycloa
 | Base | Usage |
 |------|--------|
 | `Ai_Gateway_DB` | Backend Spring |
-| `keycloak` | Keycloak (user `keycloak` / `keycloak`) |
+| `keycloak` | Keycloak (rôle DB `keycloak`, mot de passe = `KEYCLOAK_DB_PASSWORD` de `.env`) |
 
-1. Ouvrir http://localhost:8180 → login `admin` / `admin`.
-2. Le realm `Ai-Gateway` (client public `Ai-Gateway-frontend`, rôles `USER`/`DEVELOPER`/`ADMIN`, registration + verify email + SMTP mailpit + password policy + brute force déjà réglés) est **importé automatiquement** au 1er boot depuis [`docker/keycloak/import/Ai-Gateway-realm.json`](docker/keycloak/import/Ai-Gateway-realm.json) (`--import-realm`, ne s'exécute que sur un volume Postgres vide — un realm déjà présent n'est jamais écrasé). Rien à créer à la main pour la stack Compose ; il ne reste qu'à créer un utilisateur de test.
+1. Ouvrir http://localhost:8180 → login avec `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` (ceux de `.env`).
+2. Le realm `Ai-Gateway` (client public `Ai-Gateway-frontend`, rôles `USER`/`DEVELOPER`/`ADMIN`, registration + verify email + SMTP mailpit + password policy + brute force déjà réglés) est **importé automatiquement** au 1er boot depuis [`docker/keycloak/import/Ai-Gateway-realm.json`](docker/keycloak/import/Ai-Gateway-realm.json) (`--import-realm`, ne s'exécute que sur un volume Postgres vide — un realm déjà présent n'est jamais écrasé). Rien à créer à la main pour la stack Compose ; il ne reste qu'à créer un utilisateur (voir le guide d'installation plus haut, Étape 4).
    - Sans Docker Compose (Keycloak lancé autrement), reproduire à la main : client public `Ai-Gateway-frontend`, **Standard flow** ON, **Direct access grants** OFF, Valid redirect URIs `http://localhost:5173/auth/callback`, Valid post logout redirect URIs `http://localhost:5173/*`, Web origins `http://localhost:5173`.
    - Après toute modif du realm via la console admin qu'on veut garder : ré-exporter avec `Realm settings → Action → Partial export` (rôles + clients, **pas** les users) et remplacer le fichier ci-dessus.
-3. Créer les rôles realm `USER`, `DEVELOPER`, `ADMIN` et un utilisateur de test (rôles déjà créés par l'import — reste l'utilisateur de test).
-4. Backend : `iss` JWT = `http://localhost:8180/realms/Ai-Gateway` ; JWKS récupéré en interne via `http://keycloak:8080/.../certs`.
-5. Front : redirect vers **page login Keycloak** (Authorization Code + PKCE) → callback `/auth/callback` → `Authorization: Bearer` sur `/api/**`.
-6. Chaque user Keycloak est synchronisé en BDD (`users.keycloak_id` = claim `sub`).
-7. Les **rôles** viennent de Keycloak (`realm_access.roles`) et sont mappés en `ROLE_*` côté Spring.
+3. Backend : `iss` JWT = `http://localhost:8180/realms/Ai-Gateway` ; JWKS récupéré en interne via `http://keycloak:8080/.../certs`.
+4. Front : redirect vers **page login Keycloak** (Authorization Code + PKCE) → callback `/auth/callback` → `Authorization: Bearer` sur `/api/**`.
+5. Chaque user Keycloak est synchronisé en BDD (`users.keycloak_id` = claim `sub`).
+6. Les **rôles** viennent de Keycloak (`realm_access.roles`) et sont mappés en `ROLE_*` côté Spring.
 
 #### Rôles Keycloak (realm roles)
 
@@ -282,7 +361,7 @@ Assignez au moins `USER` (ou `ADMIN`) à chaque compte. Sans `ADMIN`, les bouton
 
 #### Inscription publique (self-registration)
 
-Le login est **entièrement délégué** à la page hébergée par Keycloak (Authorization Code + PKCE, pas de formulaire côté React) — activer l'inscription publique est donc un simple toggle dans la console d'admin Keycloak, **pas du code**. Mais côté app, tout nouveau compte vu pour la première fois (auto-inscrit ou créé à la main par un admin dans Keycloak — l'app ne peut pas distinguer les deux) démarre **`enabled=false`** : un ADMIN doit l'activer explicitement dans **Users & Rôles** avant tout accès. Sans ça, une inscription publique ouverte laisserait n'importe qui avec un email consommer du budget LLM sans contrôle.
+Le login est **entièrement délégué** à la page hébergée par Keycloak (Authorization Code + PKCE, pas de formulaire côté React) — activer l'inscription publique est donc un simple toggle dans la console d'admin Keycloak, **pas du code**. Mais côté app, tout nouveau compte vu pour la première fois démarre **`enabled=false`**, **sauf** s'il porte déjà le rôle `ADMIN` dans son JWT au moment de sa création (voir Étape 4 du guide d'installation — c'est ce qui permet de bootstrapper le tout premier admin sans intervention manuelle en base). Pour tout autre compte, un ADMIN doit l'activer explicitement dans **Users & Rôles** avant tout accès. Sans ça, une inscription publique ouverte laisserait n'importe qui avec un email consommer du budget LLM sans contrôle.
 
 Checklist realm Keycloak avant d'activer `Realm Settings → Login → User registration` — **déjà appliquée** dans le realm importé ([`docker/keycloak/import/Ai-Gateway-realm.json`](docker/keycloak/import/Ai-Gateway-realm.json)) :
 
@@ -308,7 +387,7 @@ if (Boolean.FALSE.equals(jwt.getClaimAsBoolean("email_verified"))) {
 
 Ce check existait déjà comme "défense en profondeur" (au cas où le realm serait mal configuré) — il est maintenant le **mécanisme principal**, pas un filet de sécurité. Pour débloquer un utilisateur : un **ADMIN ouvre la console Keycloak** (`Users → <utilisateur> → Details`) et coche **Email Verified** à la main. Au prochain login, le nouveau JWT porte `email_verified: true` et ce check passe.
 
-Ce reste **indépendant** de l'approbation applicative (`users.enabled`, voir ci-dessus) — un ADMIN doit faire les deux : cocher Email Verified dans Keycloak, **et** cliquer Activer dans Settings → Users & Rôles. Aucune des deux étapes ne remplace l'autre.
+Ce reste **indépendant** de l'approbation applicative (`users.enabled`, voir ci-dessus) — un ADMIN doit faire les deux : cocher Email Verified dans Keycloak, **et** cliquer Activer dans Settings → Users & Rôles (sauf pour un compte déjà `ADMIN` à sa création, voir plus haut). Aucune des deux étapes ne remplace l'autre.
 
 **Changer son mot de passe / nom / email :** entièrement délégué à l'**Account Console** Keycloak (self-service, même session SSO déjà active — pas de re-login) — lien dans **Settings** (`Auth Keycloak → Gérer mon compte`). Aucun formulaire de ce type côté app, volontairement : la sécurité (hash, politique de mot de passe, historique) reste 100 % du ressort de l'IdP.
 
@@ -339,7 +418,7 @@ Couverture prioritaire ajoutée :
 | Type | Exemples |
 |------|----------|
 | Unitaire | `UsageGuardServiceTest` (RPM/RPD/budget/D1), `ModelPricingServiceTest`, `ChatServiceBudgetLifecycleTest` (release/confirm), `InMemoryGuardStoresTest`, `ProviderFailureClassifierTest`, `ApiKeyServiceTest` (hash/révocation/user désactivé/expiration), `UserServiceTest` (enforcement compte désactivé, auto-toggle), `ConversationServiceTest` (suppression/purge), `ProviderBaseUrlValidatorTest` (SSRF), `AuditActorTest`/`AuditServiceTest`/`AuditDiffsTest` |
-| Provider HTTP réel | `OpenAiCompatibleProviderTest` (Bearer vs `api-key` vs optionnel, chemin Azure + `api-version`, SSE), `AzureOpenAIProviderTest`, `VllmProviderTest`, `SglangProviderTest` |
+| Provider HTTP réel | `OpenAiCompatibleProviderTest` (Bearer vs `api-key` vs optionnel, chemin Azure + `api-version`, auto-complétion `/v1`, SSE), `AzureOpenAIProviderTest`, `VllmProviderTest`, `SglangProviderTest` |
 | Intégration Redis | `RedisGuardStoresIT` (Testcontainers `redis:7-alpine`, skip si Docker absent) |
 | Intégration HTTP | `AuthAndChatIntegrationTest` (401/403, chat mock LLM), `ApiSmokeTest`, `SecurityRegressionTest`, `ApiKeyAuthIntegrationTest`, `V1ChatApiTest` (`/v1/*` sync+stream+guardrails), `UserAdminControllerIntegrationTest`, `AuditLogIntegrationTest`, `ManagementPortSecurityTest` (actuator sur port séparé, vraie requête HTTP) |
 
@@ -347,11 +426,11 @@ Prérequis IT Spring : PostgreSQL joignable (comme les tests existants). Redis I
 
 ## Swagger / OpenAPI
 
-UI : http://localhost:8080/swagger-ui.html  
-Spec JSON : http://localhost:8080/v3/api-docs  
+UI : http://localhost:8080/swagger-ui.html
+Spec JSON : http://localhost:8080/v3/api-docs
 
-Dans Swagger → **Authorize** → coller un JWT Keycloak (`Bearer` automatique) pour `/api/**`.  
-Les routes `/v1/**` (documentées aussi, mêmes contrôleurs Spring) s'authentifient avec une **clé API** (`sk-...`), pas un JWT — même champ `Bearer`, valeur différente.  
+Dans Swagger → **Authorize** → coller un JWT Keycloak (`Bearer` automatique) pour `/api/**`.
+Les routes `/v1/**` (documentées aussi, mêmes contrôleurs Spring) s'authentifient avec une **clé API** (`sk-...`), pas un JWT — même champ `Bearer`, valeur différente.
 Seule la doc UI est publique ; les routes elles-mêmes restent protégées.
 
 ## Roadmap (non livré)

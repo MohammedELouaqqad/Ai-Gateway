@@ -119,9 +119,10 @@ public class ModelService {
      * <p>
      * Best-effort, jamais bloquant pour une raison qui n'est pas "le nom est faux" :
      * <ul>
-     *   <li>Provider dont l'adaptateur n'implémente pas {@link ModelListingProvider}
-     *       (OpenAI/Azure/vLLM/SGLang à ce jour) — aucune vérification possible, on laisse
-     *       passer comme avant.</li>
+     *   <li>Provider dont l'adaptateur n'implémente pas {@link ModelListingProvider} — à ce
+     *       jour seul Azure OpenAI (déploiements, pas de {@code /models} dans la même forme ;
+     *       Ollama/OpenAI/vLLM/SGLang sont tous couverts) — aucune vérification possible, on
+     *       laisse passer comme avant.</li>
      *   <li>Provider listable mais injoignable au moment de la création (ex. Ollama down) —
      *       on ne bloque pas la création pour une panne transitoire sans rapport avec le nom
      *       saisi ; le check de robustesse au chat (GlobalExceptionHandler) reste le filet.</li>
@@ -162,14 +163,23 @@ public class ModelService {
                     throw new RessourceAlreadyExistsException("Model already exists: " + newName);
                 });
 
-        // Renommer vers un tag qui n'existe pas chez le provider est le même trou que la
-        // création sans check — même garde-fou, même raisonnement (voir createModel).
-        if (!newName.equals(model.getName())) {
-            assertModelExistsOnProvider(model.getProvider(), newName);
+        Provider targetProvider = model.getProvider();
+        boolean providerChanged = model.getProvider() == null
+                || !request.providerId().equals(model.getProvider().getId());
+        if (providerChanged) {
+            targetProvider = providerRepository.findById(request.providerId())
+                    .orElseThrow(() -> new RessourceNotFoundException("Provider not found with id " + request.providerId()));
+        }
+
+        // Nom OU provider changé → revalider contre la CIBLE (pas l'ancien provider) : renommer
+        // et changer de provider sont le même trou que la création sans check, même garde-fou.
+        if (providerChanged || !newName.equals(model.getName())) {
+            assertModelExistsOnProvider(targetProvider, newName);
         }
 
         model.setDisplayName(request.displayName().trim());
         model.setName(newName);
+        model.setProvider(targetProvider);
         return modelRepository.save(model);
     }
 

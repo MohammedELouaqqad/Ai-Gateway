@@ -23,22 +23,102 @@ const emptyProviderForm = {
   apiKey: '',
 }
 
+interface ProviderEditForm {
+  name: string
+  baseUrl: string
+  location: ProviderLocation
+  apiKey: string
+}
+
 function ProviderRow({
   provider,
   canMutate,
+  editing,
+  editForm,
+  onEditFormChange,
   onToggle,
-  onRename,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
   onDelete,
 }: {
   provider: ApiProvider
   canMutate: boolean
+  editing: boolean
+  editForm: ProviderEditForm
+  onEditFormChange: (form: ProviderEditForm) => void
   onToggle: (id: number) => void
-  onRename: (provider: ApiProvider) => void
+  onStartEdit: (provider: ApiProvider) => void
+  onSaveEdit: (id: number) => void
+  onCancelEdit: () => void
   onDelete: (id: number, name: string) => void
 }) {
   const { common, pages } = useI18n()
   const type = providerToUiType(provider)
   const healthVariant = provider.enabled ? 'success' : 'secondary'
+
+  if (editing) {
+    return (
+      <tr className="data-table__row--editing">
+        <td>
+          <div className="data-table__field-stack">
+            <input
+              className="form-input"
+              aria-label={common.name}
+              value={editForm.name}
+              onChange={(e) => onEditFormChange({ ...editForm, name: e.target.value })}
+            />
+            <input
+              className="form-input mono"
+              aria-label={pages.providers.baseUrl}
+              value={editForm.baseUrl}
+              onChange={(e) => onEditFormChange({ ...editForm, baseUrl: e.target.value })}
+            />
+          </div>
+        </td>
+        <td colSpan={2} className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+          {pages.providers.editStatusHint}
+        </td>
+        <td className="mono">{provider.priority ?? '—'}</td>
+        <td>
+          <select
+            className="form-select"
+            aria-label={common.location}
+            value={editForm.location}
+            onChange={(e) => onEditFormChange({ ...editForm, location: e.target.value as ProviderLocation })}
+          >
+            <option value="LOCAL">{pages.providers.internal}</option>
+            <option value="CLOUD">{pages.providers.cloud}</option>
+          </select>
+        </td>
+        <td className="mono" style={{ fontSize: '0.75rem' }}>{provider.type}</td>
+        <td>
+          <input
+            type="password"
+            className="form-input"
+            aria-label={pages.providers.apiKeyLabel}
+            placeholder={pages.providers.apiKeyEditPlaceholder}
+            autoComplete="new-password"
+            value={editForm.apiKey}
+            onChange={(e) => onEditFormChange({ ...editForm, apiKey: e.target.value })}
+          />
+        </td>
+        {canMutate && (
+          <td>
+            <div className="table-actions">
+              <button type="button" className="btn btn--primary btn--sm" onClick={() => onSaveEdit(provider.id)}>
+                {common.save}
+              </button>
+              <button type="button" className="btn btn--ghost btn--sm" onClick={onCancelEdit}>
+                {common.cancel}
+              </button>
+            </div>
+          </td>
+        )}
+      </tr>
+    )
+  }
+
   return (
     <tr>
       <td>
@@ -75,7 +155,7 @@ function ProviderRow({
             <button
               type="button"
               className="btn btn--ghost btn--sm"
-              onClick={() => onRename(provider)}
+              onClick={() => onStartEdit(provider)}
             >
               {common.rename}
             </button>
@@ -108,6 +188,13 @@ export function ProvidersPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editForm, setEditForm] = useState<ProviderEditForm>({
+    name: '',
+    baseUrl: '',
+    location: 'LOCAL',
+    apiKey: '',
+  })
 
   const loadProviders = useCallback(async () => {
     const data = await fetchProviders()
@@ -167,24 +254,35 @@ export function ProvidersPage() {
     }
   }
 
-  async function handleRename(provider: ApiProvider) {
-    const name = window.prompt(p.renameNamePrompt, provider.name)
-    if (!name?.trim()) return
-    const baseUrl = window.prompt(p.renameUrlPrompt, provider.baseUrl ?? '')
-    if (baseUrl === null) return
-    // Always starts blank — the stored key is never re-displayed. Leaving it blank
-    // here means "don't touch the key", matching the backend's blank/null semantics.
-    const apiKey = window.prompt(p.renameApiKeyPrompt, '')
-    if (apiKey === null) return
+  function startEdit(provider: ApiProvider) {
+    setError(null)
+    setEditingId(provider.id)
+    setEditForm({
+      name: provider.name,
+      baseUrl: provider.baseUrl ?? '',
+      location: provider.location ?? 'LOCAL',
+      // Always starts blank — the stored key is never re-displayed. Blank on save means
+      // "don't touch the key", matching the backend's blank/null semantics.
+      apiKey: '',
+    })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+  }
+
+  async function handleSaveEdit(id: number) {
+    if (!editForm.name.trim()) return
 
     setError(null)
     try {
-      await updateProvider(provider.id, {
-        name: name.trim(),
-        baseUrl: baseUrl.trim() || undefined,
-        priority: provider.priority,
-        apiKey: apiKey.trim() || undefined,
+      await updateProvider(id, {
+        name: editForm.name.trim(),
+        baseUrl: editForm.baseUrl.trim() || undefined,
+        location: editForm.location,
+        apiKey: editForm.apiKey.trim() || undefined,
       })
+      setEditingId(null)
       await loadProviders()
     } catch (e) {
       setError(e instanceof Error ? e.message : common.loadError)
@@ -305,8 +403,8 @@ export function ProvidersPage() {
                 value={form.location}
                 onChange={(e) => setForm((prev) => ({ ...prev, location: e.target.value as ProviderLocation }))}
               >
-                <option value="LOCAL">LOCAL</option>
-                <option value="CLOUD">CLOUD</option>
+                <option value="LOCAL">{p.internal}</option>
+                <option value="CLOUD">{p.cloud}</option>
               </select>
             </div>
             <div className="form-group" style={{ alignSelf: 'end' }}>
@@ -353,8 +451,13 @@ export function ProvidersPage() {
                     key={provider.id}
                     provider={provider}
                     canMutate={canMutate}
+                    editing={editingId === provider.id}
+                    editForm={editForm}
+                    onEditFormChange={setEditForm}
                     onToggle={(id) => void handleToggle(id)}
-                    onRename={(pr) => void handleRename(pr)}
+                    onStartEdit={startEdit}
+                    onSaveEdit={(id) => void handleSaveEdit(id)}
+                    onCancelEdit={cancelEdit}
                     onDelete={(id, name) => void handleDelete(id, name)}
                   />
                 ))}

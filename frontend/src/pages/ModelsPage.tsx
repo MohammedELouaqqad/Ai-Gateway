@@ -25,6 +25,8 @@ export function ModelsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editForm, setEditForm] = useState(emptyForm)
 
   const loadModels = useCallback(async () => {
     const data = await fetchModels()
@@ -102,18 +104,31 @@ export function ModelsPage() {
     }
   }
 
-  async function handleRename(model: ApiModel) {
-    const displayName = window.prompt(modelsCopy.renameDisplayPrompt, model.displayName ?? model.name)
-    if (!displayName?.trim()) return
-    const name = window.prompt(modelsCopy.renameApiPrompt, model.name)
-    if (!name?.trim()) return
+  function startEdit(model: ApiModel) {
+    setError(null)
+    setEditingId(model.id)
+    setEditForm({
+      displayName: model.displayName ?? model.name,
+      name: model.name,
+      providerId: model.provider ? String(model.provider.id) : '',
+    })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+  }
+
+  async function handleSaveEdit(id: number) {
+    if (!editForm.displayName.trim() || !editForm.name.trim() || !editForm.providerId) return
 
     setError(null)
     try {
-      await updateModel(model.id, {
-        displayName: displayName.trim(),
-        name: name.trim(),
+      await updateModel(id, {
+        displayName: editForm.displayName.trim(),
+        name: editForm.name.trim(),
+        providerId: Number(editForm.providerId),
       })
+      setEditingId(null)
       await loadPage()
     } catch (e) {
       setError(e instanceof Error ? e.message : common.loadError)
@@ -240,6 +255,60 @@ export function ModelsPage() {
                   const type = providerToUiType(m.provider)
                   const isDefault = isModelDefault(m)
 
+                  if (editingId === m.id) {
+                    return (
+                      <tr key={m.id} className="data-table__row--editing">
+                        <td>
+                          <div className="data-table__field-stack">
+                            <input
+                              className="form-input"
+                              aria-label={modelsCopy.displayName}
+                              value={editForm.displayName}
+                              onChange={(e) => setEditForm((prev) => ({ ...prev, displayName: e.target.value }))}
+                            />
+                            <input
+                              className="form-input mono"
+                              aria-label={modelsCopy.apiName}
+                              value={editForm.name}
+                              onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))}
+                            />
+                          </div>
+                        </td>
+                        <td>
+                          <select
+                            className="form-select"
+                            aria-label={common.provider}
+                            value={editForm.providerId}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, providerId: e.target.value }))}
+                          >
+                            {providers.map((p) => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td colSpan={3} className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                          {modelsCopy.editStatusHint}
+                        </td>
+                        {canMutate && (
+                          <td className="data-table__actions-cell">
+                            <div className="table-actions">
+                              <button
+                                type="button"
+                                className="btn btn--primary btn--sm"
+                                onClick={() => void handleSaveEdit(m.id)}
+                              >
+                                {common.save}
+                              </button>
+                              <button type="button" className="btn btn--ghost btn--sm" onClick={cancelEdit}>
+                                {common.cancel}
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    )
+                  }
+
                   return (
                     <tr key={m.id}>
                       <td>
@@ -275,7 +344,7 @@ export function ModelsPage() {
                             isDefault={isDefault}
                             providerEnabled={Boolean(m.provider?.enabled)}
                             canMutate={canMutate}
-                            onRename={() => void handleRename(m)}
+                            onRename={() => startEdit(m)}
                             onSetDefault={() => void handleSetDefault(m.id)}
                             onToggle={() => void handleToggle(m.id)}
                             onDelete={() => void handleDelete(m.id, m.displayName ?? m.name)}

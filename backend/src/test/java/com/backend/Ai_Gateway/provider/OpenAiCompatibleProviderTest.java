@@ -71,9 +71,9 @@ class OpenAiCompatibleProviderTest {
         VllmProvider provider = new VllmProvider(restBuilder, WebClient.builder(), new ObjectMapper());
 
         Provider providerRow = new Provider(); // no apiKey set — local server, no auth required
-        providerRow.setBaseUrl("http://localhost:9999");
+        providerRow.setBaseUrl("http://localhost:9999"); // "/v1" auto-appended — see baseUrlVersionSuffix()
 
-        server.expect(requestTo("http://localhost:9999/chat/completions"))
+        server.expect(requestTo("http://localhost:9999/v1/chat/completions"))
                 .andExpect(headerDoesNotExist("Authorization"))
                 .andRespond(withSuccess(SAMPLE_CHAT_RESPONSE, MediaType.APPLICATION_JSON));
 
@@ -94,6 +94,42 @@ class OpenAiCompatibleProviderTest {
 
         server.expect(requestTo("http://localhost:8000/v1/chat/completions"))
                 .andExpect(header("Authorization", "Bearer vllm-secret"))
+                .andRespond(withSuccess(SAMPLE_CHAT_RESPONSE, MediaType.APPLICATION_JSON));
+
+        provider.chat(providerRow, sampleRequest);
+
+        server.verify();
+    }
+
+    @Test
+    void chat_customBaseUrlAlreadyEndingInV1_isNotDoubled() {
+        RestClient.Builder restBuilder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restBuilder).build();
+        VllmProvider provider = new VllmProvider(restBuilder, WebClient.builder(), new ObjectMapper());
+
+        Provider providerRow = new Provider();
+        providerRow.setBaseUrl("http://localhost:9999/v1"); // already has it — must not become /v1/v1
+
+        server.expect(requestTo("http://localhost:9999/v1/chat/completions"))
+                .andRespond(withSuccess(SAMPLE_CHAT_RESPONSE, MediaType.APPLICATION_JSON));
+
+        provider.chat(providerRow, sampleRequest);
+
+        server.verify();
+    }
+
+    @Test
+    void chat_azureCustomBaseUrl_neverGetsV1Appended() {
+        RestClient.Builder restBuilder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restBuilder).build();
+        AzureOpenAIProvider provider = new AzureOpenAIProvider(restBuilder, WebClient.builder(), new ObjectMapper());
+
+        Provider providerRow = new Provider();
+        providerRow.setApiKey("azure-secret");
+        providerRow.setBaseUrl("https://my-resource.openai.azure.com"); // Azure never uses /v1
+
+        server.expect(requestTo(
+                        "https://my-resource.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-06-01"))
                 .andRespond(withSuccess(SAMPLE_CHAT_RESPONSE, MediaType.APPLICATION_JSON));
 
         provider.chat(providerRow, sampleRequest);

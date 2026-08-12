@@ -2,6 +2,7 @@ package com.backend.Ai_Gateway.provider;
 
 import com.backend.Ai_Gateway.entity.Provider;
 import com.backend.Ai_Gateway.enums.ProviderType;
+import com.backend.Ai_Gateway.provider.dto.ProviderModelInfo;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -9,11 +10,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.List;
 import java.util.Set;
 
 /** Public OpenAI only — Azure OpenAI is {@link AzureOpenAIProvider} (different auth scheme). */
 @Component
-public class OpenAIProvider extends OpenAiCompatibleProvider {
+public class OpenAIProvider extends OpenAiCompatibleProvider implements ModelListingProvider {
 
     private final String defaultOpenAiApiKey;
 
@@ -53,5 +55,10 @@ public class OpenAIProvider extends OpenAiCompatibleProvider {
     @Override
     protected void applyAuth(Provider provider, HttpHeaders headers) {
         headers.setBearerAuth(resolveApiKey(provider));
+    }
+
+    @Override
+    public List<ProviderModelInfo> models(Provider provider) {
+        return listModelsOpenAiStyle(provider);
     }
 }
