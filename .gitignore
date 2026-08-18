@@ -16,3 +16,5 @@ AI_GATEWAY_PROJECT.md
 # One-off local admin script (DB cleanup after a test-pollution incident) — not part of the
 # app, references internal row ids specific to one local database. Delete once run.
 /cleanup_test_pollution.sql
+
+.idea/
