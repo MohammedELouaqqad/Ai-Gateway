@@ -7,6 +7,12 @@ AI_GATEWAY_PROJECT.md
 .env.local
 .env.*.local
 
+# Claude Code local session state — per-user, never shared (the "local" suffix is the
+# convention's own signal for this; .claude/settings.json without "local" would be fine to
+# share, this isn't that).
+.claude/settings.local.json
+.claude/*.lock
+
 # One-off local admin script (DB cleanup after a test-pollution incident) — not part of the
 # app, references internal row ids specific to one local database. Delete once run.
 /cleanup_test_pollution.sql
