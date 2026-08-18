@@ -1,0 +1,27 @@
+# Prometheus — AI Gateway Platform
+# Rétention TSDB : 15 jours (flag --storage.tsdb.retention.time=15d dans compose)
+#
+# Un seul scrape du Gateway : service Docker « gateway » (alias du backend).
+# Pas de job host.docker.internal (doublons + incompatibilité Linux).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: ai-gateway
+    metrics_path: /actuator/prometheus
+    scrape_interval: 15s
+    static_configs:
+      # Management port (8081) — separate from the app port (8080), unpublished to the host.
+      # Reachable here only because Prometheus shares the Docker internal network.
+      - targets: ['gateway:8081']
+        labels:
+          app: ai-gateway

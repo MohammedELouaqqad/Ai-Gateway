@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Command git -ErrorAction SilentlyContinue; where.exe git 2>&1; Test-Path \"C:\\\\Program Files\\\\Git\\\\bin\\\\git.exe\"; Test-Path \"$env:LOCALAPPDATA\\\\Programs\\\\Git\\\\bin\\\\git.exe\")"
+    ]
+  }
+}
