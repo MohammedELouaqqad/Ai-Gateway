@@ -19,6 +19,10 @@ AI_GATEWAY_PROJECT.md
 
 .idea/
 
+# TypeScript incremental build cache — regenerated on every `tsc` run, not source.
+frontend/tsconfig.tsbuildinfo
 
-./docs/rag-guide.md
-./docs/rag-security-review.md
+# Local-only internal docs — not meant for the shared repo (the security review in particular
+# documents real findings with exact file:line references, kept local on purpose).
+docs/rag-guide.md
+docs/rag-security-review.md
