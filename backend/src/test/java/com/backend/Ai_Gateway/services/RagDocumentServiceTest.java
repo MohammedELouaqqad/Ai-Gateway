@@ -125,6 +125,10 @@ class RagDocumentServiceTest {
 
         service.delete(1L, 7L);
 
+        // Must run before the row itself is deleted — conversation_rag_documents has no
+        // ON DELETE CASCADE, so skipping this would hit a raw FK violation on a document still
+        // attached to a conversation (see RagDocumentService#delete javadoc).
+        verify(ragDocumentRepository).detachFromAllConversations(7L);
         verify(qdrantClient).deleteByDocumentId(7L);
         verify(fileStorageService).delete(doc.getStorageKey());
         verify(ragDocumentRepository).delete(doc);

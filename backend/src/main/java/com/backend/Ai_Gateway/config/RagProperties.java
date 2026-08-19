@@ -28,9 +28,12 @@ public class RagProperties {
      *  protect against. */
     private long extractionTimeoutMs = 30_000L;
 
-    private String embeddingModel = "nomic-embed-text";
-    /** Must match the actual output dimension of {@link #embeddingModel} — nomic-embed-text is
-     *  768. Wrong value here fails Qdrant collection creation loudly, not silently. */
+    /** Must match the actual output dimension of whatever model {@code embedding-server}
+     *  (docker-compose.yml) was launched with — nomic-embed-text-v1.5 is 768. Wrong value here
+     *  fails Qdrant collection creation loudly, not silently. TEI serves one fixed model per
+     *  instance (picked at its own startup, not sent per-request), so there is no
+     *  "embeddingModel" property here to keep in sync — this dimension is the only thing that
+     *  has to match. */
     private int embeddingDimension = 768;
 
     /** Chunks retrieved per chat message when the conversation has RAG documents attached. */
@@ -85,14 +88,6 @@ public class RagProperties {
 
     public void setExtractionTimeoutMs(long extractionTimeoutMs) {
         this.extractionTimeoutMs = extractionTimeoutMs;
-    }
-
-    public String getEmbeddingModel() {
-        return embeddingModel;
-    }
-
-    public void setEmbeddingModel(String embeddingModel) {
-        this.embeddingModel = embeddingModel;
     }
 
     public int getEmbeddingDimension() {

@@ -142,7 +142,14 @@ public class ModelService {
                     provider.getName(), ex.getMessage());
             return;
         }
-        boolean exists = available.stream().anyMatch(m -> modelName.equals(m.name()));
+        // Exact match first; fallback accepts a bare name against a provider that reports it
+        // with a HuggingFace-style "org/repo" prefix (common on self-hosted vLLM/SGLang, e.g.
+        // "Qwen/Qwen2.5-0.5B-Instruct") — a user typing just "Qwen2.5-0.5B-Instruct" is
+        // referring to the exact same model, not a typo, and was being wrongly rejected before
+        // this fallback existed. Deliberately one-directional (provider's name ends with
+        // "/" + what the user typed) — the reverse would accept typos too permissively.
+        boolean exists = available.stream().anyMatch(
+                m -> modelName.equals(m.name()) || m.name().endsWith("/" + modelName));
         if (!exists) {
             String sample = available.stream().map(ProviderModelInfo::name).limit(5)
                     .reduce((a, b) -> a + ", " + b).orElse("aucun modèle disponible");

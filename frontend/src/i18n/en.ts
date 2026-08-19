@@ -66,6 +66,7 @@ export const en: Dictionary = {
     creating: 'Creating…',
     add: '+ Add',
     cancel: 'Cancel',
+    close: 'Close',
     edit: 'Edit',
     update: 'Update',
     save: 'Save',
@@ -256,8 +257,10 @@ export const en: Dictionary = {
       removeDefaultBeforeDelete: 'Remove default status before deleting',
       disableBeforeDelete: 'Disable this model before deleting it',
       deleteModel: 'Delete this model',
-      deleteBlockedReferenced:
-        '"{name}" can\'t be deleted: it is still referenced by {conversations} conversation(s) and {logs} usage log(s). Deleting it would break that history — keep it disabled instead; the model stays hidden from new conversations but its history remains intact.',
+      deleteBlockedTitle: 'Can\'t delete "{name}"',
+      deleteBlockedBody:
+        'Still referenced by {conversations} conversation(s) and {logs} usage log(s). Deleting it would erase that history — it stays disabled and hidden from new conversations instead.',
+      deleteBlockedViewUsage: 'View usage',
       deleteBlockedGeneric: 'This model is still referenced by existing conversations or usage logs and can\'t be deleted — keep it disabled instead.',
       visionLabel: 'Vision-capable',
       visionHint: 'Lets users attach an image to a chat message sent to this model.',

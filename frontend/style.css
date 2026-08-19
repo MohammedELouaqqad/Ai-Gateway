@@ -1228,6 +1228,7 @@ textarea:focus-visible {
   border-color: rgba(239, 68, 68, 0.3);
 }
 
+
 .btn--sm {
   padding: var(--space-2) var(--space-3);
   font-size: var(--text-label);
@@ -2590,7 +2591,11 @@ textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 44px;
+  gap: var(--space-2);
+  /* Matches .chat-composer__input's min-height (52px) — row uses align-items:flex-end so the
+     textarea can grow upward while these stay pinned to the bottom; a mismatched height here
+     left an 8px gap making the buttons look shorter than the input at rest. */
+  height: 52px;
   min-width: 5.5rem;
   padding: 0 var(--space-4);
   border-radius: var(--radius-md);
@@ -2625,6 +2630,16 @@ textarea:focus-visible {
   border-color: var(--border-default);
 }
 
+.chat-btn__spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: api-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
 .chat-btn--stop:not(:disabled):hover {
   border-color: #f87171;
   color: #fca5a5;
@@ -2636,8 +2651,9 @@ textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  /* Square, matching .chat-composer__input's min-height (52px) — see .chat-btn for why. */
+  width: 52px;
+  height: 52px;
   flex: 0 0 auto;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-default);
@@ -2697,6 +2713,14 @@ textarea:focus-visible {
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-md);
+  /* Fade+rise on mount — conditional rendering means no exit animation without a JS animation
+     library, not worth the dependency for one popover; the open feels intentional either way. */
+  animation: chat-menu-in 0.12s ease-out;
+}
+
+@keyframes chat-menu-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .chat-composer__menu-item {
@@ -3628,5 +3652,103 @@ textarea:focus-visible {
 
 .table-row--highlight td {
   background: color-mix(in srgb, var(--accent, #2563eb) 12%, transparent);
+}
+
+/* Dialog — see components/Dialog.tsx for scope (currently: blocked-model-delete only). */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(0, 0, 0, 0.5);
+  animation: dialog-backdrop-in 0.12s ease-out;
+}
+
+@keyframes dialog-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.dialog {
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100vh - var(--space-8));
+  overflow-y: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  animation: dialog-in 0.15s ease-out;
+}
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) 0;
+}
+
+.dialog__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.dialog__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.dialog__close:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.dialog__body {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.dialog__body p {
+  margin: 0 0 var(--space-3);
+}
+
+.dialog__body p:last-child {
+  margin-bottom: 0;
+}
+
+.dialog__body ul {
+  margin: 0 0 var(--space-3);
+  padding-left: 1.25rem;
+}
+
+.dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-4);
 }
 

@@ -134,6 +134,10 @@ public class RagDocumentService {
     @Transactional
     public void delete(Long userId, Long documentId) {
         RagDocument document = requireOwned(userId, documentId);
+        // Must run before ragDocumentRepository.delete() below — conversation_rag_documents has
+        // no ON DELETE CASCADE (verified against the schema), so deleting a document still
+        // attached to a conversation would otherwise hit a raw Postgres FK violation.
+        ragDocumentRepository.detachFromAllConversations(document.getId());
         qdrantClient.deleteByDocumentId(document.getId());
         fileStorageService.delete(document.getStorageKey());
         ragDocumentRepository.delete(document);

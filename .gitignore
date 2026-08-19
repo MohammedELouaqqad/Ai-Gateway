@@ -18,3 +18,7 @@ AI_GATEWAY_PROJECT.md
 /cleanup_test_pollution.sql
 
 .idea/
+
+
+./docs/rag-guide.md
+./docs/rag-security-review.md

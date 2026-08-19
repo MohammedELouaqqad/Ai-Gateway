@@ -64,6 +64,7 @@ export const fr = {
     creating: 'Création…',
     add: '+ Ajouter',
     cancel: 'Annuler',
+    close: 'Fermer',
     edit: 'Éditer',
     update: 'Mettre à jour',
     save: 'Enregistrer',
@@ -372,8 +373,10 @@ export const fr = {
       removeDefaultBeforeDelete: 'Retirez le statut défaut avant de supprimer',
       disableBeforeDelete: 'Désactivez ce modèle avant de le supprimer',
       deleteModel: 'Supprimer ce modèle',
-      deleteBlockedReferenced:
-        '« {name} » ne peut pas être supprimé : il est encore référencé par {conversations} conversation(s) et {logs} log(s) d\'utilisation. Le supprimer casserait cet historique — laissez-le désactivé à la place ; il reste masqué pour les nouvelles conversations mais son historique reste intact.',
+      deleteBlockedTitle: 'Impossible de supprimer « {name} »',
+      deleteBlockedBody:
+        'Encore référencé par {conversations} conversation(s) et {logs} log(s) d\'utilisation. Le supprimer effacerait cet historique — il reste désactivé et masqué pour les nouvelles conversations à la place.',
+      deleteBlockedViewUsage: 'Voir les usages',
       deleteBlockedGeneric: 'Ce modèle est encore référencé par des conversations ou des logs d\'utilisation existants et ne peut pas être supprimé — laissez-le désactivé à la place.',
       visionLabel: 'Compatible images',
       visionHint: 'Permet aux utilisateurs de joindre une image à un message envoyé à ce modèle.',

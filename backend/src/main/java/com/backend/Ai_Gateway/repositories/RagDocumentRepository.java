@@ -3,6 +3,7 @@ package com.backend.Ai_Gateway.repositories;
 import com.backend.Ai_Gateway.entity.RagDocument;
 import com.backend.Ai_Gateway.enums.RagDocumentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -29,4 +30,15 @@ public interface RagDocumentRepository extends JpaRepository<RagDocument, Long> 
             + "WHERE c.id = :conversationId AND d.status = :status")
     List<Long> findDocumentIdsByConversationIdAndStatus(
             @Param("conversationId") Long conversationId, @Param("status") RagDocumentStatus status);
+
+    /**
+     * Native delete against the join table itself — required before deleting a
+     * {@code RagDocument} row still attached to any conversation: {@code conversation_rag_documents
+     * .rag_document_id} has no {@code ON DELETE CASCADE} (verified against the actual schema, not
+     * assumed), so deleting a still-attached document without this first hits a raw Postgres FK
+     * violation. See {@code RagDocumentService#delete}.
+     */
+    @Modifying
+    @Query(value = "DELETE FROM conversation_rag_documents WHERE rag_document_id = :documentId", nativeQuery = true)
+    void detachFromAllConversations(@Param("documentId") Long documentId);
 }

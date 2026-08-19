@@ -19,7 +19,10 @@
 # Prod-like (seed off) :
 #   SPRING_PROFILES_ACTIVE=prod APP_SEED_ENABLED=false docker compose --profile stack up --build -d
 #
-# Ollama reste sur l'hôte. Keycloak est dans Compose (profil stack).
+# Ollama pour le CHAT reste sur l'hôte (GPU passthrough vers Docker fragile/absent selon l'OS).
+# L'EMBEDDING RAG, lui, tourne DANS Compose (service embedding-server, HuggingFace TEI) — pas
+# besoin de GPU, et ça évite d'exiger Ollama (ou quoi que ce soit) sur l'hôte pour quelqu'un qui
+# n'utilise pas Ollama comme provider de chat. Keycloak est dans Compose (profil stack).
 # Après le 1er démarrage : créer le realm Ai-Gateway + client (voir README).
 
 services:
@@ -83,6 +86,36 @@ services:
     # condition: service_started (not service_healthy) specifically because of this — verified
     # the hard way: a service_healthy dependency on a container that can never report healthy
     # blocks backend from starting AT ALL, even with RAG disabled.
+
+  # Serveur d'embedding RAG dédié — jamais utilisé pour le chat, séparé de tout ce que
+  # l'utilisateur choisit comme provider (SGLang, OpenAI, ou même un Ollama hôte). Ça évite
+  # d'exiger qu'un utilisateur installe quoi que ce soit sur sa machine juste pour que RAG
+  # fonctionne — un gap réel qu'on a rencontré (quelqu'un utilisant seulement SGLang voyait
+  # chaque ingestion RAG échouer, faute d'un Ollama qu'il n'avait — et n'avait pas besoin
+  # d'avoir — installé).
+  # HuggingFace Text Embeddings Inference (TEI), pas Ollama : Ollama pèse ~3,2 Go rien que pour
+  # le runtime (support GPU multi-backend inclus, inutile ici) contre un modèle de ~274 Mo — TEI
+  # est purpose-built pour l'embedding, une image nettement plus légère. Télécharge et sert le
+  # modèle directement au démarrage, aucun service de pull séparé nécessaire (contrairement à
+  # Ollama). CPU only — un modèle d'embedding n'a pas besoin de GPU.
+  # Pas de healthcheck (même raisonnement que qdrant plus haut — pas de curl/wget confirmé dans
+  # cette image, pas assumé) : backend dépend de service_started, pas service_healthy. Fenêtre
+  # de démarrage à froid connue : si un document est uploadé avant la fin du téléchargement du
+  # modèle par TEI, cette tentative d'ingestion échoue et n'est jamais retentée automatiquement
+  # (RagIngestionJob ne retente jamais un FAILED, voir sa javadoc) — un ré-upload suffit.
+  embedding-server:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    # nomic-ai/nomic-embed-text-v1.5 était le choix initial (mêmes dimensions, 768) mais son
+    # config.json publié sur HuggingFace a un champ dupliqué (hidden_size) que le parseur
+    # strict de TEI rejette (backend ONNX ET son repli safetensors — même fichier de config
+    # cassé pour les deux) — vérifié en le lançant réellement, pas supposé. bge-base-en-v1.5
+    # est aussi en 768 dimensions (aucun autre changement de config nécessaire) et largement
+    # utilisé avec TEI sans ce problème.
+    command: ["--model-id", "BAAI/bge-base-en-v1.5"]
+    ports:
+      - "11435:80"
+    volumes:
+      - embedding-server-data:/data
 
   # Garantit la base `keycloak` même si le volume Postgres existait déjà
   # (initdb.d ne rejoue pas sur un data dir non vide).
@@ -222,13 +255,16 @@ services:
       APP_RAG_CHUNK_OVERLAP_CHARS: ${APP_RAG_CHUNK_OVERLAP_CHARS:?}
       APP_RAG_MAX_EXTRACTED_CHARS: ${APP_RAG_MAX_EXTRACTED_CHARS:?}
       APP_RAG_EXTRACTION_TIMEOUT_MS: ${APP_RAG_EXTRACTION_TIMEOUT_MS:?}
-      APP_RAG_EMBEDDING_MODEL: ${APP_RAG_EMBEDDING_MODEL:?}
       APP_RAG_EMBEDDING_DIMENSION: ${APP_RAG_EMBEDDING_DIMENSION:?}
       APP_RAG_RATE_LIMIT_PER_HOUR: ${APP_RAG_RATE_LIMIT_PER_HOUR:?}
       QDRANT_HOST: qdrant
       QDRANT_PORT: "6333"
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:?}
       QDRANT_API_KEY: ${QDRANT_API_KEY:?}
+      # Dedicated embedding server (see embedding-server above) — deliberately NOT
+      # OLLAMA_BASE_URL (that one stays whatever the user configured for chat, host or
+      # otherwise). Decoupled on purpose so RAG never depends on the chat provider choice.
+      APP_RAG_EMBEDDING_BASE_URL: http://embedding-server:80
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -239,6 +275,8 @@ services:
       keycloak:
         condition: service_healthy
       qdrant:
+        condition: service_started
+      embedding-server:
         condition: service_started
 
   frontend:
@@ -312,3 +350,4 @@ volumes:
   grafana_data:
   uploads-data:
   qdrant-data:
+  embedding-server-data:

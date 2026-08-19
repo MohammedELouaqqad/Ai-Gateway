@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { AppLayout } from '../layouts/AppLayout'
 import { ApiStateBanner } from '../components/ApiStateBanner'
 import { Badge } from '../components/Badge'
@@ -39,7 +40,11 @@ export function UsagePage() {
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
 
-  const [filterModel, setFilterModel] = useState('')
+  // Deep-linkable from other pages (e.g. Models' "View usage" when delete is blocked) — the URL
+  // param seeds the initial filter, then behaves like any other in-page filter afterward (no
+  // further URL sync — reading it once on mount is enough for this entry-point use case).
+  const [searchParams] = useSearchParams()
+  const [filterModel, setFilterModel] = useState(() => searchParams.get('model') ?? '')
   const [filterProvider, setFilterProvider] = useState('')
   const [filterLocation, setFilterLocation] = useState<LocationFilter>('')
   const [filterFrom, setFilterFrom] = useState('')

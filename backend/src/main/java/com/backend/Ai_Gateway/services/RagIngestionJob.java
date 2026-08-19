@@ -4,7 +4,7 @@ import com.backend.Ai_Gateway.config.RagProperties;
 import com.backend.Ai_Gateway.entity.RagDocument;
 import com.backend.Ai_Gateway.enums.RagDocumentStatus;
 import com.backend.Ai_Gateway.repositories.RagDocumentRepository;
-import com.backend.Ai_Gateway.services.rag.OllamaEmbeddingService;
+import com.backend.Ai_Gateway.services.rag.TeiEmbeddingService;
 import com.backend.Ai_Gateway.services.rag.PdfTextExtractor;
 import com.backend.Ai_Gateway.services.rag.QdrantClient;
 import com.backend.Ai_Gateway.services.rag.TextChunker;
@@ -43,7 +43,7 @@ public class RagIngestionJob {
     private final RagDocumentRepository ragDocumentRepository;
     private final FileStorageService fileStorageService;
     private final PdfTextExtractor pdfTextExtractor;
-    private final OllamaEmbeddingService embeddingService;
+    private final TeiEmbeddingService embeddingService;
     private final QdrantClient qdrantClient;
     private final RagProperties ragProperties;
 
@@ -51,7 +51,7 @@ public class RagIngestionJob {
             RagDocumentRepository ragDocumentRepository,
             FileStorageService fileStorageService,
             PdfTextExtractor pdfTextExtractor,
-            OllamaEmbeddingService embeddingService,
+            TeiEmbeddingService embeddingService,
             QdrantClient qdrantClient,
             RagProperties ragProperties
     ) {
@@ -132,7 +132,7 @@ public class RagIngestionJob {
         List<QdrantPoint> points = new ArrayList<>();
         for (int i = 0; i < chunks.size(); i++) {
             String chunkText = chunks.get(i);
-            List<Float> vector = embeddingService.embed(ragProperties.getEmbeddingModel(), chunkText);
+            List<Float> vector = embeddingService.embed(chunkText);
             String pointId = UUID.nameUUIDFromBytes((documentId + ":" + i).getBytes(StandardCharsets.UTF_8)).toString();
             points.add(new QdrantPoint(pointId, vector, Map.of(
                     "documentId", documentId,

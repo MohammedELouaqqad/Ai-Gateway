@@ -22,7 +22,7 @@ Passerelle LLM multi-provider (Spring Boot 3 + PostgreSQL + React), compatible *
 | Santé système (`/admin/health`) | ADMIN — Gateway, Postgres, Prometheus + conso par utilisateur |
 | Prompt templates | CRUD + insert chat (`{{content}}`) |
 | **Upload d'images & vision** (`POST /api/files`) | Un modèle marqué `visionCapable` (admin) peut recevoir une image jointe au chat — validée par magic bytes (jamais l'extension), rate-limitée, stockée sur disque. Voir "Upload & vision" plus bas |
-| **RAG — documents** (`POST /api/rag/documents`) | Upload PDF → extraction (PDFBox) → chunking → embeddings (Ollama local) → Qdrant. Documents attachables à une conversation (plusieurs par conversation) ; le contexte récupéré est injecté comme non-fiable, jamais comme instruction. Opt-in (`APP_RAG_ENABLED`). Voir "RAG" plus bas |
+| **RAG — documents** (`POST /api/rag/documents`) | Upload PDF → extraction (PDFBox) → chunking → embeddings (TEI local, indépendant du provider de chat) → Qdrant. Documents attachables à une conversation (plusieurs par conversation) ; le contexte récupéré est injecté comme non-fiable, jamais comme instruction. Opt-in (`APP_RAG_ENABLED`). Voir "RAG" plus bas |
 | Auth | Keycloak JWT (Resource Server) sur `/api/**` — find-or-create user via `sub`, **désactivé par défaut** à la première connexion (approbation ADMIN requise, voir section Keycloak). Clé API sur `/v1/**` (chaîne de sécurité séparée) |
 | Monitoring ops | Prometheus + Grafana (JVM / HTTP / usage par user-provider) — voir [monitoring/README.md](monitoring/README.md) |
 
@@ -48,14 +48,20 @@ Un utilisateur peut joindre une image (`png`/`jpg`/`webp`) à un message de chat
 
 ## RAG (documents)
 
-**Opt-in** — `APP_RAG_ENABLED` doit être explicitement à `false` pour un déploiement sans Qdrant ni modèle d'embedding pullé (aucun défaut caché : la variable est requise, voir "Variables d'environnement"). La stack Docker de ce repo l'a à `true`, Qdrant et `nomic-embed-text` étant déjà câblés.
+**Opt-in** — `APP_RAG_ENABLED` doit être explicitement à `false` pour un déploiement sans Qdrant ni serveur d'embedding (aucun défaut caché : la variable est requise, voir "Variables d'environnement"). La stack Docker de ce repo l'a à `true`, Qdrant et l'embedding étant déjà câblés.
+
+**L'embedding est indépendant du provider de chat choisi (SGLang, OpenAI, Azure, vLLM, Ollama...)** — chat et RAG sont deux pipelines complètement séparés, `TeiEmbeddingService` n'est jamais couplé au choix de provider fait pour la génération.
+
+**Dans la stack Docker de ce repo, c'est déjà géré** : un service `embedding-server` dédié tourne dans Compose ([HuggingFace Text Embeddings Inference](https://github.com/huggingface/text-embeddings-inference), pas Ollama — image nettement plus légère, purpose-built pour l'embedding), uniquement pour cet usage, jamais partagé avec un éventuel Ollama-hôte utilisé pour le chat (`app.rag.embedding-base-url` est une variable séparée de `app.ollama.base-url`, voir `TeiEmbeddingService` javadoc). TEI télécharge et sert son modèle (`BAAI/bge-base-en-v1.5`) automatiquement à son propre démarrage — aucun service de pull séparé nécessaire. **Un utilisateur n'a donc jamais besoin d'installer Ollama, ni quoi que ce soit d'autre, sur sa machine pour que RAG fonctionne**, même s'il utilise SGLang/OpenAI/Azure pour le chat — le modèle d'embedding tourne bien en CPU, pas besoin de GPU.
+
+**Hors stack Docker** (backend natif) : `APP_RAG_EMBEDDING_BASE_URL` doit pointer vers un serveur TEI (ou tout autre service exposant `POST /embed`) qui tourne quelque part — voir "Variables d'environnement".
 
 **Pipeline d'ingestion** (`RagIngestionJob`, job planifié — jamais sur le thread de la requête) :
 
 1. `POST /api/rag/documents` — upload PDF, validé par magic bytes (`%PDF-`), statut `PENDING`
 2. Extraction texte (Apache PDFBox) — **timeout** (`app.rag.extraction-timeout-ms`) + **plafond de caractères extraits** (`app.rag.max-extracted-chars`), anti-bombe. Limitation assumée : `Future.cancel` sur un parsing PDFBox bloqué ne le tue pas de force (pas de point d'interruption dans son parseur) — ça borne l'attente du job, pas le CPU/mémoire du thread orphelin. Protection complète = sandbox séparée, hors scope v1
 3. Chunking (~500 tokens, overlap ~75 tokens, approximation 4 caractères/token)
-4. Embeddings via **Ollama local** (`APP_RAG_EMBEDDING_MODEL`, `nomic-embed-text` dans la stack Docker de ce repo) — pas OpenAI, cohérent avec le reste du gateway (souveraineté des données)
+4. Embeddings via **TEI** (`embedding-server` dans la stack Docker de ce repo, `BAAI/bge-base-en-v1.5`) — pas OpenAI, cohérent avec le reste du gateway (souveraineté des données)
 5. Upsert dans **Qdrant** (REST direct, pas de client gRPC officiel — même logique que les providers LLM : aucun SDK vendeur)
 6. Statut `READY` (ou `FAILED` + message tronqué, jamais de stack trace)
 
@@ -384,8 +390,8 @@ APP_RAG_CHUNK_CHARS=<ex. 2000>
 APP_RAG_CHUNK_OVERLAP_CHARS=<ex. 300>
 APP_RAG_MAX_EXTRACTED_CHARS=<ex. 2000000>
 APP_RAG_EXTRACTION_TIMEOUT_MS=<ex. 30000>
-APP_RAG_EMBEDDING_MODEL=<ex. nomic-embed-text>
-APP_RAG_EMBEDDING_DIMENSION=<ex. 768 — doit matcher le modèle d'embedding choisi>
+APP_RAG_EMBEDDING_DIMENSION=<ex. 768 — doit matcher le modèle servi par embedding-server>
+APP_RAG_EMBEDDING_BASE_URL=<URL du serveur TEI dédié aux embeddings — jamais le même qu'OLLAMA_BASE_URL, voir "RAG" plus haut>
 APP_RAG_RATE_LIMIT_PER_HOUR=<ex. 10>
 
 # Garde-fous (rate limit + budget)

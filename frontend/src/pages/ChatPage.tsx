@@ -18,6 +18,7 @@ import { fetchModels } from '../api/models'
 import { fetchPromptTemplates } from '../api/promptTemplates'
 import {
   attachRagDocument,
+  deleteRagDocument,
   detachRagDocument,
   fetchConversationRagDocuments,
   fetchRagDocuments,
@@ -590,6 +591,19 @@ export function ChatPage() {
     }
   }
 
+  async function handleRagDocDelete(documentId: number, filename: string) {
+    if (!window.confirm(chat.documentDeleteConfirm.replace('{name}', filename))) return
+    setError(null)
+    try {
+      await deleteRagDocument(documentId)
+      setRagDocuments((prev) => prev.filter((d) => d.id !== documentId))
+      setConversationRagDocuments((prev) => prev.filter((d) => d.id !== documentId))
+      setRagDocToAttach('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : chat.documentError)
+    }
+  }
+
   // Poll while any attached document is still being ingested, so its status badge (and the
   // moment it becomes usable for retrieval) updates without a manual refresh.
   useEffect(() => {
@@ -925,31 +939,29 @@ export function ChatPage() {
             <div className="chat-composer__toolbar chat-composer__toolbar--documents" aria-label={chat.documentsAria}>
               <span className="chat-composer__label">{chat.documents}</span>
               {unattachedRagDocuments.length > 0 && (
-                <>
-                  <select
-                    id="chat-rag-doc"
-                    className="form-select chat-composer__select chat-composer__select--compact"
-                    value={ragDocToAttach}
-                    disabled={sending || ragDocUploading || !activeConversationId}
-                    onChange={(e) => setRagDocToAttach(e.target.value)}
-                  >
-                    <option value="">{chat.documentChoose}</option>
-                    {unattachedRagDocuments.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.filename}{d.status !== 'READY' ? ` — ${ragDocStatusLabel(d.status)}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() => ragDocToAttach && void handleRagDocAttach(Number(ragDocToAttach))}
-                    disabled={!ragDocToAttach || !activeConversationId}
-                    title={chat.documentAttach}
-                  >
-                    {chat.documentAttach}
-                  </button>
-                </>
+                // Selecting attaches immediately — no separate "Attach" click to forget. That
+                // two-step version is exactly what caused a real RAG-context bug: a user picked
+                // a document here, never clicked Attach, and the model silently answered with
+                // zero document context (see docs/rag-security-review.md-adjacent incident).
+                // Permanent deletion moved to the attached chips below, since a document you can
+                // still pick from this list is, by construction, not attached yet.
+                <select
+                  id="chat-rag-doc"
+                  className="form-select chat-composer__select chat-composer__select--compact"
+                  value={ragDocToAttach}
+                  disabled={sending || ragDocUploading || !activeConversationId}
+                  onChange={(e) => {
+                    const id = e.target.value
+                    if (id) void handleRagDocAttach(Number(id))
+                  }}
+                >
+                  <option value="">{chat.documentChoose}</option>
+                  {unattachedRagDocuments.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.filename}{d.status !== 'READY' ? ` — ${ragDocStatusLabel(d.status)}` : ''}
+                    </option>
+                  ))}
+                </select>
               )}
               <input
                 ref={ragDocInputRef}
@@ -985,6 +997,15 @@ export function ChatPage() {
                     onClick={() => void handleRagDocDetach(d.id)}
                   >
                     <X size={14} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-attachment-chip__remove"
+                    aria-label={chat.documentDelete}
+                    title={chat.documentDelete}
+                    onClick={() => void handleRagDocDelete(d.id, d.filename)}
+                  >
+                    <Trash2 size={14} aria-hidden="true" />
                   </button>
                 </div>
               ))}
@@ -1118,6 +1139,7 @@ export function ChatPage() {
                   onClick={handleStop}
                   disabled={!sending}
                 >
+                  {sending && <span className="chat-btn__spinner" aria-hidden="true" />}
                   {common.stop}
                 </button>
                 <button

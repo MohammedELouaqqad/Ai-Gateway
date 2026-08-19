@@ -24,13 +24,13 @@ public class RagRetrievalService {
 
     private static final Logger log = LoggerFactory.getLogger(RagRetrievalService.class);
 
-    private final OllamaEmbeddingService embeddingService;
+    private final TeiEmbeddingService embeddingService;
     private final QdrantClient qdrantClient;
     private final RagProperties ragProperties;
     private final RagDocumentRepository ragDocumentRepository;
 
     public RagRetrievalService(
-            OllamaEmbeddingService embeddingService,
+            TeiEmbeddingService embeddingService,
             QdrantClient qdrantClient,
             RagProperties ragProperties,
             RagDocumentRepository ragDocumentRepository
@@ -63,7 +63,7 @@ public class RagRetrievalService {
         }
 
         try {
-            List<Float> queryVector = embeddingService.embed(ragProperties.getEmbeddingModel(), query);
+            List<Float> queryVector = embeddingService.embed(query);
             return qdrantClient.search(queryVector, ragProperties.getRetrievalTopK(), readyDocumentIds, userId);
         } catch (Exception e) {
             log.warn("RAG retrieval failed for user {}, continuing without document context: {}",

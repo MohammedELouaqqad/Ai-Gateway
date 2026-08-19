@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { AppLayout } from '../layouts/AppLayout'
 import { Badge } from '../components/Badge'
 import { ApiStateBanner } from '../components/ApiStateBanner'
+import { Dialog } from '../components/Dialog'
 import { ModelRowActions } from '../components/ModelRowActions'
 import { isAdmin } from '../auth/roles'
 import { fetchProviders } from '../api/providers'
@@ -36,6 +38,12 @@ export function ModelsPage() {
   const [error, setError] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editForm, setEditForm] = useState(emptyForm)
+  const [blockedDelete, setBlockedDelete] = useState<{
+    name: string
+    technicalName: string
+    conversations: number
+    logs: number
+  } | null>(null)
 
   const loadModels = useCallback(async () => {
     const data = await fetchModels()
@@ -147,7 +155,7 @@ export function ModelsPage() {
     }
   }
 
-  async function handleDelete(id: number, label: string) {
+  async function handleDelete(id: number, label: string, technicalName: string) {
     setError(null)
     try {
       // Fetched on demand, right before offering delete — a referenced model can't actually
@@ -156,12 +164,12 @@ export function ModelsPage() {
       // lets the explanation include real counts instead of a generic "no".
       const summary = await fetchModelUsageSummary(id)
       if (summary.conversationCount > 0 || summary.usageLogCount > 0) {
-        window.alert(
-          modelsCopy.deleteBlockedReferenced
-            .replace('{name}', label)
-            .replace('{conversations}', String(summary.conversationCount))
-            .replace('{logs}', String(summary.usageLogCount)),
-        )
+        setBlockedDelete({
+          name: label,
+          technicalName,
+          conversations: summary.conversationCount,
+          logs: summary.usageLogCount,
+        })
         return
       }
       if (!window.confirm(modelsCopy.deleteConfirm.replace('{name}', label))) return
@@ -415,7 +423,7 @@ export function ModelsPage() {
                             onRename={() => startEdit(m)}
                             onSetDefault={() => void handleSetDefault(m.id)}
                             onToggle={() => void handleToggle(m.id)}
-                            onDelete={() => void handleDelete(m.id, m.displayName ?? m.name)}
+                            onDelete={() => void handleDelete(m.id, m.displayName ?? m.name, m.name)}
                           />
                         </td>
                       )}
@@ -432,6 +440,39 @@ export function ModelsPage() {
           </div>
         </div>
       </section>
+
+      <Dialog
+        open={blockedDelete !== null}
+        onClose={() => setBlockedDelete(null)}
+        title={modelsCopy.deleteBlockedTitle.replace('{name}', blockedDelete?.name ?? '')}
+        closeLabel={common.close}
+        actions={
+          <>
+            <Link
+              to={`/usage?model=${encodeURIComponent(blockedDelete?.technicalName ?? '')}`}
+              className="btn btn--ghost btn--sm"
+              onClick={() => setBlockedDelete(null)}
+            >
+              {modelsCopy.deleteBlockedViewUsage}
+            </Link>
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={() => setBlockedDelete(null)}
+            >
+              {common.close}
+            </button>
+          </>
+        }
+      >
+        {blockedDelete && (
+          <p>
+            {modelsCopy.deleteBlockedBody
+              .replace('{conversations}', String(blockedDelete.conversations))
+              .replace('{logs}', String(blockedDelete.logs))}
+          </p>
+        )}
+      </Dialog>
     </AppLayout>
   )
 }
