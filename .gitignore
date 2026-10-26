@@ -1,0 +1,28 @@
+AI_GATEWAY_PROJECT.md
+
+# Secrets — root-level .env (docker compose reads this automatically for
+# POSTGRES_PASSWORD / KEYCLOAK_ADMIN_PASSWORD / GRAFANA_ADMIN_PASSWORD overrides).
+# backend/.env and frontend/.env are already covered by their own nested .gitignore.
+.env
+.env.local
+.env.*.local
+
+# Claude Code local session state — per-user, never shared (the "local" suffix is the
+# convention's own signal for this; .claude/settings.json without "local" would be fine to
+# share, this isn't that).
+.claude/settings.local.json
+.claude/*.lock
+
+# One-off local admin script (DB cleanup after a test-pollution incident) — not part of the
+# app, references internal row ids specific to one local database. Delete once run.
+/cleanup_test_pollution.sql
+
+.idea/
+
+# TypeScript incremental build cache — regenerated on every `tsc` run, not source.
+frontend/tsconfig.tsbuildinfo
+
+# Local-only internal docs — not meant for the shared repo (the security review in particular
+# documents real findings with exact file:line references, kept local on purpose).
+docs/rag-guide.md
+docs/rag-security-review.md

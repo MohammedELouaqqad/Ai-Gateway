@@ -1,0 +1,171 @@
+package com.backend.Ai_Gateway.config;
+
+import com.backend.Ai_Gateway.services.ApiKeyService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
+import org.springframework.core.convert.converter.Converter;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/**
+ * OAuth2 Resource Server (Keycloak JWT) for {@code /api/**} + API-key auth for
+ * {@code /v1/**} (OpenAI-compatible surface) — two independent filter chains.
+ */
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+public class SecurityConfig {
+
+    @Value("${app.cors.allowed-origins:http://localhost:5173}")
+    private String allowedOrigins;
+
+    /**
+     * {@code /v1/**} — API-key only, evaluated first. Kept separate from the JWT chain
+     * below so external OpenAI-compatible clients never need a Keycloak session.
+     */
+    @Bean
+    @Order(1)
+    public SecurityFilterChain apiKeySecurityFilterChain(
+            HttpSecurity http,
+            ApiKeyService apiKeyService,
+            ObjectMapper objectMapper
+    ) throws Exception {
+        ApiKeyAuthFilter apiKeyAuthFilter = new ApiKeyAuthFilter(apiKeyService);
+        MaxRequestSizeFilter maxRequestSizeFilter =
+                new MaxRequestSizeFilter(ContentLimits.V1_REQUEST_BODY_MAX_BYTES, objectMapper);
+        http
+                .securityMatcher("/v1/**")
+                .csrf(csrf -> csrf.disable())
+                .cors(Customizer.withDefaults())
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .anyRequest().authenticated()
+                )
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(new ApiKeyAuthenticationEntryPoint(objectMapper)))
+                .addFilterBefore(apiKeyAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // Body-size check runs strictly before auth: reject oversized bodies before
+                // spending any work (incl. key lookup) on the request.
+                .addFilterBefore(maxRequestSizeFilter, ApiKeyAuthFilter.class);
+        return http.build();
+    }
+
+    /** {@code /api/**} and everything else — unchanged Keycloak JWT resource server. */
+    @Bean
+    @Order(2)
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+                .csrf(csrf -> csrf.disable())
+                .cors(Customizer.withDefaults())
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        // /actuator/** is served on its own management.server.port (see
+                        // application.properties), never published to the host in
+                        // docker-compose.yml (network boundary = the real protection here).
+                        // It STILL needs permitAll on THIS chain: confirmed live that Spring
+                        // Security's OAuth2-resource-server enforcement from this very chain
+                        // (WWW-Authenticate: Bearer) is what actually intercepts management-port
+                        // requests too — a dedicated @ManagementContextConfiguration(CHILD)
+                        // SecurityFilterChain bean was tried and did NOT take effect (its own
+                        // chain got constructed but was never the one invoked), so this
+                        // permitAll stays the effective (and only working) way to keep the
+                        // management port from requiring app-level auth on top of the network
+                        // boundary.
+                        .requestMatchers(
+                                "/actuator/health",
+                                "/actuator/health/**",
+                                "/actuator/prometheus",
+                                "/actuator/info",
+                                "/error",
+                                // Swagger / OpenAPI (springdoc)
+                                "/v3/api-docs",
+                                "/v3/api-docs/**",
+                                "/swagger-ui.html",
+                                "/swagger-ui/**"
+                        ).permitAll()
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers("/api/**").authenticated()
+                        .anyRequest().authenticated()
+                )
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
+                );
+        return http.build();
+    }
+
+    @Bean
+    public Converter<Jwt, ? extends AbstractAuthenticationToken> jwtAuthenticationConverter() {
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(this::extractAuthorities);
+        return converter;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Collection<GrantedAuthority> extractAuthorities(Jwt jwt) {
+        List<GrantedAuthority> authorities = new ArrayList<>();
+
+        Map<String, Object> realmAccess = jwt.getClaim("realm_access");
+        if (realmAccess != null && realmAccess.get("roles") instanceof Collection<?> roles) {
+            authorities.addAll(roles.stream()
+                    .map(Object::toString)
+                    .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                    .collect(Collectors.toList()));
+        }
+
+        Map<String, Object> resourceAccess = jwt.getClaim("resource_access");
+        if (resourceAccess != null) {
+            for (Object clientObj : resourceAccess.values()) {
+                if (clientObj instanceof Map<?, ?> clientAccess
+                        && clientAccess.get("roles") instanceof Collection<?> clientRoles) {
+                    authorities.addAll(clientRoles.stream()
+                            .map(Object::toString)
+                            .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                            .collect(Collectors.toList()));
+                }
+            }
+        }
+        return authorities;
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        List<String> origins = List.of(allowedOrigins.split(","));
+        config.setAllowedOrigins(origins.stream().map(String::trim).filter(s -> !s.isEmpty()).toList());
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        config.setAllowedHeaders(List.of("*"));
+        config.setExposedHeaders(List.of("Authorization"));
+        config.setAllowCredentials(true);
+        config.setMaxAge(3600L);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
+    }
+}

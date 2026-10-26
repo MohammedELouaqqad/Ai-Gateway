@@ -1,0 +1,11 @@
+groups:
+  - name: ai-gateway-budget
+    rules:
+      - alert: AiGatewayBudgetGlobalHigh
+        expr: ai_gateway_budget_global_ratio > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Budget global AI Gateway > 80 %"
+          description: "Le ratio budget global du jour dépasse 80 % (valeur={{ $value }})."
